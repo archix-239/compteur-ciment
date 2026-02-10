@@ -27,5 +27,10 @@ temp_batch_*/
 *.log
 *.csv
 
-# Fichiers de BDD locale (si vous en utilisiez une)
+# Base de donnees et donnees locales
 *.sqlite3
+*.db
+data/
+
+# Captures
+capture_*.png

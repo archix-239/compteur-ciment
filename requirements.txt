@@ -1,0 +1,10 @@
+# Compteur Ciment - Dependencies
+flask==3.1.2
+flask-cors==6.0.1
+opencv-python==4.12.0.88
+ultralytics==8.3.182
+pyzbar==0.1.9
+numpy==2.2.6
+torch==2.8.0
+torchvision==0.23.0
+requests==2.32.5
