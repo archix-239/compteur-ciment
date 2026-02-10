@@ -1,0 +1,31 @@
+# Fichiers Bytecode Python
+__pycache__/
+*.py[cod]
+*$py.class
+
+# Environnement virtuel
+venv/
+.venv/
+env/
+ENV/
+
+#datatset
+datatset/
+
+# Fichiers de configuration IDE
+.vscode/
+.idea/
+
+# Fichiers temporaires
+*.swp
+*~
+
+# Fichiers de log et de données générés localement
+# (on ne veut pas versionner les ZIPs)
+static/downloads/
+temp_batch_*/
+*.log
+*.csv
+
+# Fichiers de BDD locale (si vous en utilisiez une)
+*.sqlite3

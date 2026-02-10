@@ -12,7 +12,8 @@ from flask_cors import CORS
 
 # --- CONFIGURATION ---
 MODEL_PATH = 'models/best_V5.pt'
-VIDEO_SOURCE = "http://192.168.137.186:8080/video"
+#VIDEO_SOURCE = "http://192.168.137.186:8080/video"
+VIDEO_SOURCE = 0  # Pour utiliser la webcam locale, décommentez cette ligne
 CONFIDENCE_THRESHOLD = 0.7
 LINE_X = 640
 BACKEND_API_URL = "http://127.0.0.1:8000/api/internal/count-event"

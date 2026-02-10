@@ -1,0 +1,253 @@
+import cv2
+import numpy as np
+from ultralytics import YOLO
+from collections import defaultdict
+import os
+import threading
+import requests
+from pyzbar.pyzbar import decode as qr_decode
+from flask import Flask, Response
+from datetime import datetime
+from flask_cors import CORS
+
+# --- CONFIGURATION MISE À JOUR ---
+MODEL_PATH = 'models/best_V5.pt'
+VIDEO_SOURCE = "http://192.168.137.186:8080/video" # !!! VÉRIFIEZ ET MODIFIEZ CETTE URL !!!
+CONFIDENCE_THRESHOLD = 0.7
+LINE_X = 640
+
+# --- NOUVEAU : Configuration pour l'intégration ---
+BACKEND_API_URL = "http://127.0.0.1:8000/api/internal/count-event"
+STREAM_HOST = "0.0.0.0"  # Rend le flux accessible sur votre réseau local
+STREAM_PORT = 8081       # Port pour le flux vidéo
+
+# --- CONSTANTES "EXPERT EDITION" (Inchangées) ---
+VERIFICATION_FRAMES_REQUIRED = 3
+MIN_ROI_SIZE = 20
+MIN_ROI_VARIANCE = 50
+MAX_REFERENCE_HISTS = 5
+
+# --- COULEURS POUR LA VISUALISATION (Inchangées) ---
+COLOR_REJECTED = (0, 0, 255)      # Rouge
+COLOR_VERIFIED = (0, 255, 0)      # Vert
+COLOR_COUNTED = (255, 0, 0)       # Bleu
+COLOR_LINE = (0, 255, 255)        # Jaune
+COLOR_TEXT = (255, 255, 255)      # Blanc
+
+# --- CONFIGURATION DE LA VÉRIFICATION VISUELLE (Conservée) ---
+# Bien que le QR code soit maintenant le critère principal, ces fonctions sont conservées.
+LOGO_TEMPLATE = None
+TEMPLATE_H, TEMPLATE_W = 0, 0
+try:
+    temp_logo = cv2.imread('templates/cement_logo.png')
+    if temp_logo is None: raise FileNotFoundError
+    if len(temp_logo.shape) == 3: LOGO_TEMPLATE = cv2.cvtColor(temp_logo, cv2.COLOR_BGR2GRAY)
+    else: LOGO_TEMPLATE = temp_logo
+    TEMPLATE_H, TEMPLATE_W = LOGO_TEMPLATE.shape
+    print("INFO: Template de logo chargé avec succès.")
+except FileNotFoundError:
+    print("AVERTISSEMENT: Le fichier 'templates/cement_logo.png' est introuvable. La vérification par logo est désactivée.")
+    LOGO_TEMPLATE = None
+
+REFERENCE_HISTS = [] 
+clahe = cv2.createCLAHE(clipLimit=2.0, tileGridSize=(8, 8))
+
+# --- NOUVEAU : Section pour la communication et le streaming ---
+app = Flask(__name__)
+CORS(app)  # Ajout de CORS pour permettre les requêtes cross-origin
+output_frame = None
+lock = threading.Lock()
+
+def send_count_event(status: str, identifier: str):
+    """Envoie un événement de comptage au backend FastAPI."""
+    try:
+        payload = {"status": status, "identifier": identifier}
+        requests.post(BACKEND_API_URL, json=payload, timeout=0.5)
+        print(f"INFO: Événement envoyé au backend : {status} - {identifier}")
+    except requests.exceptions.RequestException as e:
+        print(f"ERREUR: Impossible de contacter le backend FastAPI : {e}")
+
+def stream_generator():
+    """Générateur qui envoie les images au format MJPEG pour le streaming."""
+    global output_frame, lock
+    while True:
+        with lock:
+            if output_frame is None:
+                continue
+            (flag, encodedImage) = cv2.imencode(".jpg", output_frame)
+            if not flag:
+                continue
+        yield(b'--frame\r\n' b'Content-Type: image/jpeg\r\n\r\n' + bytearray(encodedImage) + b'\r\n')
+
+@app.route("/video_feed")
+def video_feed():
+    """La route de l'API Flask pour le flux vidéo."""
+    return Response(stream_generator(), mimetype="multipart/x-mixed-replace; boundary=frame")
+
+def start_streaming_server():
+    """Lance le serveur Flask dans un thread séparé pour ne pas bloquer le comptage."""
+    # Utiliser 'werkzeug' pour désactiver les logs de Flask dans la console
+    from werkzeug.serving import make_server
+    server = make_server(STREAM_HOST, STREAM_PORT, app)
+    server.serve_forever()
+
+# --- FONCTIONS ORIGINALES (Conservées) ---
+def update_dynamic_thresholds(logo_score, color_similarity, logo_scores, color_similarities, TEMPLATE_MATCH_THRESHOLD, HIST_SIMILARITY_THRESHOLD):
+    if logo_score > 0: logo_scores.append(logo_score)
+    if len(logo_scores) > 50: logo_scores.pop(0)
+    if color_similarity > 0: color_similarities.append(color_similarity)
+    if len(color_similarities) > 50: color_similarities.pop(0)
+    dynamic_template_threshold = max(0.3, np.mean(logo_scores) - 0.1) if logo_scores else TEMPLATE_MATCH_THRESHOLD
+    dynamic_hist_threshold = max(0.4, np.mean(color_similarities) - 0.1) if color_similarities else HIST_SIMILARITY_THRESHOLD
+    return dynamic_template_threshold, dynamic_hist_threshold
+
+def preprocess_roi_clahe(roi_gray):
+    if roi_gray.size == 0: return None
+    variance = np.var(roi_gray)
+    kernel_size = (5, 5) if variance > 1000 else (3, 3)
+    denoised = cv2.GaussianBlur(roi_gray, kernel_size, 0)
+    enhanced = clahe.apply(denoised)
+    return enhanced
+
+def calculate_hsv_histogram(roi_bgr):
+    roi_hsv = cv2.cvtColor(roi_bgr, cv2.COLOR_BGR2HSV)
+    hist = cv2.calcHist([roi_hsv], [0, 1], None, [50, 60], [0, 180, 0, 256])
+    cv2.normalize(hist, hist, alpha=0, beta=1, norm_type=cv2.NORM_MINMAX)
+    return hist
+
+def verify_by_multiscale_template_matching(roi_gray):
+    if LOGO_TEMPLATE is None: return 0.0
+    best_score = 0
+    for scale in np.linspace(0.8, 1.2, 10)[::-1]: 
+        width = int(TEMPLATE_W * scale); height = int(TEMPLATE_H * scale)
+        if height > roi_gray.shape[0] or width > roi_gray.shape[1]: continue
+        resized_template = cv2.resize(LOGO_TEMPLATE, (width, height), interpolation=cv2.INTER_AREA)
+        res = cv2.matchTemplate(roi_gray, resized_template, cv2.TM_CCOEFF_NORMED)
+        _, max_val, _, _ = cv2.minMaxLoc(res)
+        if max_val > best_score: best_score = max_val
+    return best_score
+
+def update_reference_hists(hist, logo_score, TEMPLATE_MATCH_THRESHOLD):
+    if len(REFERENCE_HISTS) < MAX_REFERENCE_HISTS:
+        if all(cv2.compareHist(ref_hist, hist, cv2.HISTCMP_CORREL) < 0.95 for ref_hist in REFERENCE_HISTS):
+            REFERENCE_HISTS.append(hist)
+    else:
+        similarities = [cv2.compareHist(ref_hist, hist, cv2.HISTCMP_CORREL) for ref_hist in REFERENCE_HISTS]
+        min_idx = np.argmin(similarities)
+        if similarities[min_idx] < 0.9 and logo_score > TEMPLATE_MATCH_THRESHOLD + 0.1:
+            REFERENCE_HISTS[min_idx] = hist
+
+# --- INITIALISATION ---
+model = YOLO(MODEL_PATH)
+cap = cv2.VideoCapture(VIDEO_SOURCE)
+if not cap.isOpened():
+    print(f"ERREUR CRITIQUE: Impossible de se connecter au flux vidéo à l'adresse : {VIDEO_SOURCE}")
+    exit()
+
+# NOUVEAU : Lancement du serveur de streaming en arrière-plan
+streaming_thread = threading.Thread(target=start_streaming_server)
+streaming_thread.daemon = True
+streaming_thread.start()
+print(f"INFO: Serveur de streaming démarré. Accédez au flux via http://VOTRE_IP_LOCALE:{STREAM_PORT}/video_feed")
+
+track_history = defaultdict(list)
+# NOUVEAU : Dictionnaire pour stocker les données de chaque objet suivi
+object_data = defaultdict(lambda: {"qr_uuid": None, "status": "rejeté"})
+counted_ids = set() # Garde les track_id déjà comptés
+
+print("INFO: Compteur démarré. Appuyez sur 'q' dans la fenêtre vidéo pour quitter.")
+
+# --- BOUCLE PRINCIPALE ---
+while True:
+    success, frame = cap.read()
+    if not success:
+        print("AVERTISSEMENT: Le flux vidéo s'est terminé ou a été perdu. Tentative de reconnexion...")
+        cap.release()
+        cap = cv2.VideoCapture(VIDEO_SOURCE)
+        continue
+
+    frame = cv2.resize(frame, (1280, 720))
+    results = model.track(frame, persist=True, verbose=False, conf=CONFIDENCE_THRESHOLD)
+    annotated_frame = frame.copy()
+
+    if results[0].boxes is not None and results[0].boxes.id is not None:
+        boxes_xyxy = results[0].boxes.xyxy.cpu()
+        track_ids = results[0].boxes.id.int().cpu().tolist()
+
+        for box_xyxy, track_id in zip(boxes_xyxy, track_ids):
+            x1, y1, x2, y2 = map(int, box_xyxy)
+            roi_bgr = frame[y1:y2, x1:x2]
+            if roi_bgr.size == 0: continue
+            
+            # --- NOUVEAU : Pipeline de vérification basé sur le QR Code ---
+            
+            # 1. On essaie de lire un QR code (une seule fois par objet suivi).
+            if object_data[track_id]["qr_uuid"] is None:
+                decoded_qrs = qr_decode(roi_bgr)
+                if decoded_qrs:
+                    qr_data = decoded_qrs[0].data.decode('utf-8')
+                    object_data[track_id]["qr_uuid"] = qr_data
+            
+            # 2. Déterminer le statut final
+            is_conforme = object_data[track_id]["qr_uuid"] is not None
+            status = "conforme" if is_conforme else "rejeté"
+            box_color = COLOR_VERIFIED if is_conforme else COLOR_REJECTED
+            
+            if track_id in counted_ids:
+                status = "compté"
+                box_color = COLOR_COUNTED
+
+            # 3. Dessiner la boîte et le label
+            cv2.rectangle(annotated_frame, (x1, y1), (x2, y2), box_color, 2)
+            label = f"ID:{track_id} - {status.upper()}"
+            if is_conforme:
+                label += f" - ...{object_data[track_id]['qr_uuid'][-6:]}"
+            cv2.putText(annotated_frame, label, (x1, y1 - 10), cv2.FONT_HERSHEY_SIMPLEX, 0.5, box_color, 2)
+
+            # 4. Logique de comptage au franchissement de la ligne
+            center_x = (x1 + x2) // 2
+            track = track_history[track_id]
+            track.append(center_x)
+            if len(track) > 2: track.pop(0)
+
+            if len(track) == 2 and track[0] < LINE_X and track[1] >= LINE_X and track_id not in counted_ids:
+                counted_ids.add(track_id)
+                # Envoyer l'événement au backend au lieu d'écrire dans un fichier
+                if is_conforme:
+                    send_count_event("conforme", object_data[track_id]["qr_uuid"])
+                else:
+                    send_count_event("rejete", f"track_id_{track_id}")
+
+    # --- AFFICHAGE FINAL ET MISE À JOUR POUR LE STREAMING ---
+    cv2.line(annotated_frame, (LINE_X, 0), (LINE_X, annotated_frame.shape[0]), COLOR_LINE, 2)
+    total_conforme = len([tid for tid in counted_ids if object_data[tid]["qr_uuid"] is not None])
+    total_rejete = len(counted_ids) - total_conforme
+    cv2.putText(annotated_frame, f"Conformes: {total_conforme}", (50, 50), cv2.FONT_HERSHEY_SIMPLEX, 1, COLOR_VERIFIED, 2)
+    cv2.putText(annotated_frame, f"Rejetes: {total_rejete}", (50, 100), cv2.FONT_HERSHEY_SIMPLEX, 1, COLOR_REJECTED, 2)
+    
+    # Mettre à jour l'image globale pour le thread de streaming
+    with lock:
+        output_frame = annotated_frame.copy()
+
+    # Affichage local (fenêtre OpenCV) pour le débogage
+    display_frame = cv2.resize(annotated_frame, (960, 540))
+    cv2.imshow("Compteur Ciment - Service de Vision", display_frame)
+
+    key = cv2.waitKey(1) & 0xFF
+    if key == ord("q"):
+        break
+    if key == ord("r"):
+        # Réinitialiser les états
+        track_history.clear()
+        object_data.clear()
+        counted_ids.clear()
+        REFERENCE_HISTS.clear()
+        print("\n>>>> SYSTEME DE SUIVI ET DE COMPTAGE REINITIALISE.\n")
+    if key == ord("s"):
+        capture_filename = f"capture_{datetime.now().strftime('%Y%m%d_%H%M%S')}.png"
+        cv2.imwrite(capture_filename, frame)
+        print(f"INFO: Image capturée et sauvegardée sous {capture_filename}")
+
+cap.release()
+cv2.destroyAllWindows()
+print("INFO: Application de comptage terminée.")
