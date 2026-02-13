@@ -28,17 +28,34 @@ temp_batch_*/
 *.log
 *.csv
 
+<<<<<<< HEAD
 # --- GLOBAL / SYSTÈME ---
 .DS_Store
 Thumbs.db
 *.log
 
 
+=======
+>>>>>>> evaluation-audit-technique-15092829130921045862
 # Base de données SQLite (On ne versionne généralement pas la DB binaire, sauf si elle est vide/exemple)
 *.db
 *.sqlite3
 locate_m3_backend/database/*.db
 
+<<<<<<< HEAD
+=======
+
+# --- Dosier d'images ---
+static/
+/tests
+/test-results
+
+# --- GLOBAL / SYSTÈME ---
+.DS_Store
+Thumbs.db
+*.log
+
+>>>>>>> evaluation-audit-technique-15092829130921045862
 # Flask instances
 instance/
 .webassets-cache
