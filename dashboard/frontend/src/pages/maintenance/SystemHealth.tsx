@@ -188,7 +188,7 @@ export default function SystemHealth() {
           <div className="flex gap-4 border-b border-zinc-800/50 py-2">
             <span className="text-zinc-500">2025-08-27 11:02:05</span>
             <span className="text-yellow-400 font-bold">[WARN]</span>
-            <span className="text-zinc-300">High network jitter detected (std_dev > 50ms). Stream buffer increased to 500ms.</span>
+            <span className="text-zinc-300">{"High network jitter detected (std_dev > 50ms). Stream buffer increased to 500ms."}</span>
           </div>
           <div className="flex gap-4 py-2">
             <span className="text-zinc-500">2025-08-27 11:05:00</span>
