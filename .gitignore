@@ -27,5 +27,39 @@ temp_batch_*/
 *.log
 *.csv
 
-# Fichiers de BDD locale (si vous en utilisiez une)
+# Base de données SQLite (On ne versionne généralement pas la DB binaire, sauf si elle est vide/exemple)
+*.db
 *.sqlite3
+locate_m3_backend/database/*.db
+
+
+# --- Dosier d'images ---
+static/
+/tests
+/test-results
+
+# --- GLOBAL / SYSTÈME ---
+.DS_Store
+Thumbs.db
+*.log
+
+# Flask instances
+instance/
+.webassets-cache
+
+# --- FRONTEND (Node / React) ---
+# Dépendances (Très lourd, on installe via npm install)
+node_modules/
+npm-debug.log*
+yarn-debug.log*
+yarn-error.log*
+
+# Build de production
+dist/
+build/
+
+# Environnement local
+.env.local
+.env.development.local
+.env.test.local
+.env.production.local
