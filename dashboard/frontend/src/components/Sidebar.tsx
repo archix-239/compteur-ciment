@@ -10,7 +10,14 @@ import {
   TrendingUp,
   Activity,
   Link as LinkIcon,
-  ChevronDown
+  ChevronDown,
+  LayoutDashboard,
+  Video,
+  Clock,
+  Wrench,
+  Database,
+  Cpu,
+  RefreshCw
 } from 'lucide-react';
 import { useState } from 'react';
 
@@ -31,7 +38,15 @@ interface MenuSection {
 export function Sidebar({ activeRoute = 'dashboard' }: SidebarProps) {
   const [expandedSections, setExpandedSections] = useState<Record<string, boolean>>({
     monitoring: true,
-    production: true
+    production: true,
+    configuration: false,
+    quality: false,
+    alerts: false,
+    reports: false,
+    administration: false,
+    analytics: false,
+    maintenance: false,
+    integration: false
   });
 
   const toggleSection = (section: string) => {
@@ -44,82 +59,84 @@ export function Sidebar({ activeRoute = 'dashboard' }: SidebarProps) {
   const menuSections: MenuSection[] = [
     {
       title: 'Monitoring',
-      icon: BarChart3,
+      icon: LayoutDashboard,
       items: [
-        { id: 'dashboard', label: 'Dashboard Principal', href: '/' },
-        { id: 'live-stream', label: 'Live Stream Viewer', href: '/monitoring/live' },
+        { id: 'dashboard', label: 'Tableau de Bord', href: '/' },
+        { id: 'live-stream', label: 'Flux en Direct', href: '/monitoring/live' },
       ]
     },
     {
       title: 'Production',
       icon: Package,
       items: [
-        { id: 'production-log', label: 'Production Log', href: '/production/log' },
-        { id: 'sessions', label: 'Session Management', href: '/production/sessions' },
-        { id: 'timeline', label: 'Production Timeline', href: '/production/timeline' },
+        { id: 'production-log', label: 'Journal de Production', href: '/production/log' },
+        { id: 'sessions', label: 'Gestion des Sessions', href: '/production/sessions' },
+        { id: 'timeline', label: 'Chronologie', href: '/production/timeline' },
       ]
     },
     {
       title: 'Configuration',
       icon: Settings,
       items: [
-        { id: 'camera-settings', label: 'Camera Settings', href: '/config/camera' },
-        { id: 'model-config', label: 'Model Configuration', href: '/config/model' },
-        { id: 'templates', label: 'Templates & Color', href: '/config/templates' },
-        { id: 'virtual-line', label: 'Virtual Line', href: '/config/line' },
+        { id: 'camera-settings', label: 'Paramètres Caméra', href: '/config/camera' },
+        { id: 'model-config', label: 'Modèle IA', href: '/config/model' },
+        { id: 'templates', label: 'Templates & Couleurs', href: '/config/templates' },
+        { id: 'virtual-line', label: 'Ligne Virtuelle', href: '/config/line' },
       ]
     },
     {
-      title: 'Quality',
+      title: 'Qualité',
       icon: ShieldCheck,
       items: [
-        { id: 'quality-dash', label: 'Detection Quality', href: '/quality/dashboard' },
-        { id: 'verification', label: 'Manual Verification', href: '/quality/verification' },
-        { id: 'anomalies', label: 'Anomaly Detection', href: '/quality/anomalies' },
+        { id: 'quality-dash', label: 'Qualité Détection', href: '/quality/dashboard' },
+        { id: 'verification', label: 'Vérification Manuelle', href: '/quality/verification' },
+        { id: 'anomalies', label: 'Détection d\'Anomalies', href: '/quality/anomalies' },
       ]
     },
     {
-      title: 'Alerts',
+      title: 'Alertes',
       icon: Bell,
       items: [
-        { id: 'alert-mgmt', label: 'Alert Management', href: '/alerts/management' },
+        { id: 'alert-mgmt', label: 'Gestion des Alertes', href: '/alerts/management' },
       ]
     },
     {
-      title: 'Reports',
+      title: 'Rapports',
       icon: FileText,
       items: [
-        { id: 'reports', label: 'Production Reports', href: '/reports/production' },
-        { id: 'export', label: 'Data Export', href: '/reports/export' },
+        { id: 'reports', label: 'Rapports de Production', href: '/reports/production' },
+        { id: 'export', label: 'Export de Données', href: '/reports/export' },
       ]
     },
     {
       title: 'Administration',
       icon: Users,
       items: [
-        { id: 'users', label: 'User Management', href: '/admin/users' },
-        { id: 'system', label: 'System Settings', href: '/admin/system' },
+        { id: 'users', label: 'Utilisateurs', href: '/admin/users' },
+        { id: 'system', label: 'Paramètres Système', href: '/admin/system' },
+        { id: 'api-mgmt', label: 'Gestion API', href: '/admin/api' },
       ]
     },
     {
-      title: 'Analytics',
+      title: 'Analytique',
       icon: TrendingUp,
       items: [
-        { id: 'analytics', label: 'Performance Analytics', href: '/analytics/performance' },
+        { id: 'analytics', label: 'Performance', href: '/analytics/performance' },
       ]
     },
     {
       title: 'Maintenance',
-      icon: Activity,
+      icon: Wrench,
       items: [
-        { id: 'health', label: 'System Health', href: '/maintenance/health' },
+        { id: 'health', label: 'Santé Système', href: '/maintenance/health' },
+        { id: 'diagnostics', label: 'Outils Diagnostic', href: '/maintenance/diagnostics' },
       ]
     },
     {
-      title: 'Integration',
+      title: 'Intégration',
       icon: LinkIcon,
       items: [
-        { id: 'integration', label: 'Third-party Integrations', href: '/integration/third-party' },
+        { id: 'integration', label: 'Services Tiers', href: '/integration/third-party' },
       ]
     },
   ];
@@ -132,7 +149,7 @@ export function Sidebar({ activeRoute = 'dashboard' }: SidebarProps) {
             <Package className="w-6 h-6 text-white" />
           </div>
           <div>
-            <h1 className="text-sm font-bold text-sidebar-foreground">Cement</h1>
+            <h1 className="text-sm font-bold text-sidebar-foreground">Ciment</h1>
             <p className="text-xs text-sidebar-accent">Monitor Pro</p>
           </div>
         </div>
@@ -141,12 +158,13 @@ export function Sidebar({ activeRoute = 'dashboard' }: SidebarProps) {
       <nav className="flex-1 px-3 py-6 space-y-4">
         {menuSections.map((section) => {
           const Icon = section.icon;
-          const isExpanded = expandedSections[section.title.toLowerCase()];
+          const sectionKey = section.title.toLowerCase().normalize("NFD").replace(/[\u0300-\u036f]/g, "");
+          const isExpanded = expandedSections[sectionKey];
 
           return (
             <div key={section.title} className="space-y-1">
               <button
-                onClick={() => toggleSection(section.title.toLowerCase())}
+                onClick={() => toggleSection(sectionKey)}
                 className="w-full flex items-center justify-between px-3 py-2 text-xs font-semibold uppercase tracking-wider text-sidebar-foreground/50 hover:text-sidebar-foreground transition-colors"
               >
                 <div className="flex items-center gap-2">
@@ -193,7 +211,7 @@ export function Sidebar({ activeRoute = 'dashboard' }: SidebarProps) {
           "
         >
           <LogOut className="w-5 h-5" />
-          <span>Logout</span>
+          <span>Déconnexion</span>
         </button>
       </div>
     </aside>

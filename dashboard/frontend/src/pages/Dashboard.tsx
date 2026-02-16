@@ -3,15 +3,12 @@ import { StatCard } from '@/components/StatCard';
 import { ProductionGaps } from '@/components/ProductionGaps';
 import { useProductionData } from '@/hooks/useProductionData';
 import {
-  LineChart,
-  Line,
   BarChart,
   Bar,
   XAxis,
   YAxis,
   CartesianGrid,
   Tooltip,
-  Legend,
   ResponsiveContainer,
 } from 'recharts';
 
@@ -34,15 +31,15 @@ export default function Dashboard() {
           <div className="flex items-center justify-between">
             <div>
               <h1 className="text-3xl font-bold font-mono text-foreground">
-                Cement Bag <span className="text-orange-400">Production Monitor</span>
+                Suivi de Production <span className="text-orange-400">Sacs de Ciment</span>
               </h1>
               <p className="text-sm text-muted-foreground mt-1">
-                Conveyor Line Analysis • AI-Powered Detection (YOLO11 + SAM3)
+                Analyse de Ligne de Convoyeur • Détection par IA (YOLOv11 + SAM3)
               </p>
             </div>
             <div className="text-right">
               <div className="text-sm text-green-400 font-medium">
-                ● {totalBags} bags detected — {(totalBags * 2.21).toFixed(1)}s footage
+                ● {totalBags} sacs détectés — {(totalBags * 2.21).toFixed(1)}s de flux
               </div>
             </div>
           </div>
@@ -54,29 +51,29 @@ export default function Dashboard() {
         {/* KPI Cards */}
         <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-6 mb-8">
           <StatCard
-            title="Total Bags"
+            title="Total Sacs"
             value={totalBags}
-            unit="bags counted"
+            unit="sacs comptés"
             icon={<Package className="w-5 h-5" />}
             highlighted
           />
           <StatCard
-            title="Production Rate"
+            title="Taux de Production"
             value={productionRate.toFixed(1)}
-            unit="bags / minute"
+            unit="sacs / minute"
             icon={<Zap className="w-5 h-5" />}
             trend={{ value: 5, direction: 'up' }}
           />
           <StatCard
-            title="Avg Interval"
+            title="Intervalle Moyen"
             value={avgInterval.toFixed(2)}
-            unit="seconds between bags"
+            unit="secondes entre sacs"
             icon={<Clock className="w-5 h-5" />}
           />
           <StatCard
-            title="Consistency"
+            title="Consistance"
             value={`${consistency}%`}
-            unit="coefficient of variation"
+            unit="coefficient de variation"
             icon={<TrendingUp className="w-5 h-5" />}
             trend={{ value: 8, direction: 'down' }}
           />
@@ -87,7 +84,7 @@ export default function Dashboard() {
           {/* Interval Between Bags Chart */}
           <div className="bg-card border border-border rounded-lg p-6">
             <h3 className="text-sm font-medium text-muted-foreground uppercase tracking-wider mb-6">
-              Interval Between Bags (seconds)
+              Intervalle entre Sacs (secondes)
             </h3>
             <ResponsiveContainer width="100%" height={300}>
               <BarChart data={intervalData}>
@@ -101,24 +98,24 @@ export default function Dashboard() {
                     borderRadius: '0.5rem',
                   }}
                 />
-                <Bar dataKey="avgInterval" fill="#fbbf24" radius={[4, 4, 0, 0]} />
-                <Bar dataKey="minInterval" fill="#60a5fa" radius={[4, 4, 0, 0]} />
-                <Bar dataKey="maxInterval" fill="#f87171" radius={[4, 4, 0, 0]} />
+                <Bar dataKey="avgInterval" fill="#fbbf24" radius={[4, 4, 0, 0]} name="Moyenne" />
+                <Bar dataKey="minInterval" fill="#60a5fa" radius={[4, 4, 0, 0]} name="Min" />
+                <Bar dataKey="maxInterval" fill="#f87171" radius={[4, 4, 0, 0]} name="Max" />
               </BarChart>
             </ResponsiveContainer>
             <div className="text-xs text-muted-foreground mt-4 text-center">
-              avg 2.21s — showing min/max variation
+              moyenne 2.21s — affichage de la variation min/max
             </div>
           </div>
 
           {/* Activity Heatmap */}
           <div className="bg-card border border-border rounded-lg p-6">
             <h3 className="text-sm font-medium text-muted-foreground uppercase tracking-wider mb-6">
-              Activity Heatmap (5s buckets)
+              Heatmap d'Activité (blocs de 5s)
             </h3>
             <div className="space-y-4">
               <div>
-                <div className="text-xs text-muted-foreground mb-3">Bags</div>
+                <div className="text-xs text-muted-foreground mb-3">Sacs</div>
                 <div className="flex gap-2 flex-wrap">
                   {heatmapData.map((bucket, idx) => (
                     <div
@@ -137,7 +134,7 @@ export default function Dashboard() {
                         hover:ring-2 hover:ring-orange-500 cursor-pointer
                         flex items-center justify-center font-mono text-sm font-bold
                       `}
-                      title={`${bucket.time}: ${bucket.activity.count} bags`}
+                      title={`${bucket.time}: ${bucket.activity.count} sacs`}
                     >
                       {bucket.activity.count > 0 && (
                         <span className="text-gray-900">{bucket.activity.count}</span>
@@ -148,23 +145,23 @@ export default function Dashboard() {
               </div>
 
               <div className="flex gap-4 mt-6 pt-4 border-t border-border">
-                <div className="text-xs text-muted-foreground">Activity:</div>
+                <div className="text-xs text-muted-foreground">Activité:</div>
                 <div className="flex gap-3 flex-wrap">
                   <div className="flex items-center gap-2">
                     <div className="w-4 h-4 rounded bg-gray-700" />
-                    <span className="text-xs text-muted-foreground">None</span>
+                    <span className="text-xs text-muted-foreground">Aucune</span>
                   </div>
                   <div className="flex items-center gap-2">
                     <div className="w-4 h-4 rounded bg-yellow-600" />
-                    <span className="text-xs text-muted-foreground">Low</span>
+                    <span className="text-xs text-muted-foreground">Faible</span>
                   </div>
                   <div className="flex items-center gap-2">
                     <div className="w-4 h-4 rounded bg-yellow-500" />
-                    <span className="text-xs text-muted-foreground">Med</span>
+                    <span className="text-xs text-muted-foreground">Moyenne</span>
                   </div>
                   <div className="flex items-center gap-2">
                     <div className="w-4 h-4 rounded bg-yellow-400" />
-                    <span className="text-xs text-muted-foreground">High</span>
+                    <span className="text-xs text-muted-foreground">Élevée</span>
                   </div>
                 </div>
               </div>
@@ -180,38 +177,38 @@ export default function Dashboard() {
           {/* Throughput Trend */}
           <div className="bg-card border border-border rounded-lg p-6">
             <h3 className="text-sm font-medium text-muted-foreground uppercase tracking-wider mb-6">
-              Throughput Trend
+              Tendance du Débit
             </h3>
 
             <div className="space-y-8">
               <div className="flex items-center justify-between">
                 <div>
-                  <div className="text-xs text-muted-foreground">FIRST HALF</div>
+                  <div className="text-xs text-muted-foreground">PREMIÈRE MOITIÉ</div>
                   <div className="text-4xl font-bold font-mono text-foreground mt-2">
                     {firstHalfInterval.toFixed(2)}
                     <span className="text-lg text-muted-foreground ml-2">s</span>
                   </div>
-                  <div className="text-xs text-muted-foreground mt-1">avg interval</div>
+                  <div className="text-xs text-muted-foreground mt-1">intervalle moyen</div>
                 </div>
                 <div className="text-2xl text-muted-foreground">→</div>
                 <div>
-                  <div className="text-xs text-muted-foreground">SECOND HALF</div>
+                  <div className="text-xs text-muted-foreground">DEUXIÈME MOITIÉ</div>
                   <div className="text-4xl font-bold font-mono text-foreground mt-2">
                     {secondHalfInterval.toFixed(2)}
                     <span className="text-lg text-muted-foreground ml-2">s</span>
                   </div>
-                  <div className="text-xs text-muted-foreground mt-1">avg interval</div>
+                  <div className="text-xs text-muted-foreground mt-1">intervalle moyen</div>
                 </div>
               </div>
 
               <div className="pt-6 border-t border-border">
                 <div className="text-red-400 font-medium text-sm">
-                  Production got {slowdownPercent}% slower in second half
+                  La production est {slowdownPercent}% plus lente en deuxième moitié
                 </div>
               </div>
 
               <div className="space-y-2">
-                <div className="text-xs text-muted-foreground">Consistency Score</div>
+                <div className="text-xs text-muted-foreground">Score de Consistance</div>
                 <div className="w-full bg-gray-700 rounded-full h-2">
                   <div
                     className="bg-gradient-to-r from-yellow-500 to-yellow-400 h-2 rounded-full"
@@ -219,7 +216,7 @@ export default function Dashboard() {
                   />
                 </div>
                 <div className="text-xs text-muted-foreground mt-1">
-                  σ = 1.3s ({consistency}% variation)
+                  σ = 1.3s ({consistency}% de variation)
                 </div>
               </div>
             </div>
