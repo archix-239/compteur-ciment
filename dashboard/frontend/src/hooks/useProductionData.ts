@@ -1,8 +1,9 @@
 import { useState, useCallback, useEffect } from 'react';
+import { API_URL, WS_URL } from '@/lib/api';
 
 /**
  * Production Data Hook
- * Manages simulated real-time production data based on cement bag counter
+ * Manages real-time production data from the backend
  */
 
 export interface ProductionMetrics {
@@ -101,42 +102,64 @@ const generateProductionGaps = (): ProductionGap[] => {
 
 export function useProductionData() {
   const [metrics, setMetrics] = useState<ProductionMetrics>({
-    totalBags: 14,
-    productionRate: 28.6,
-    avgInterval: 2.21,
-    consistency: 59,
-    firstHalfInterval: 2.09,
-    secondHalfInterval: 2.32,
-    slowdownPercent: 10.9,
+    totalBags: 0,
+    productionRate: 0,
+    avgInterval: 0,
+    consistency: 0,
+    firstHalfInterval: 0,
+    secondHalfInterval: 0,
+    slowdownPercent: 0,
   });
 
-  const [intervalData, setIntervalData] = useState<IntervalDataPoint[]>(generateIntervalData());
-  const [heatmapData, setHeatmapData] = useState<HeatmapBucket[]>(generateHeatmapData());
-  const [productionGaps, setProductionGaps] = useState<ProductionGap[]>(
-    generateProductionGaps()
-  );
+  const [intervalData, setIntervalData] = useState<IntervalDataPoint[]>([]);
+  const [heatmapData, setHeatmapData] = useState<HeatmapBucket[]>([]);
+  const [productionGaps, setProductionGaps] = useState<ProductionGap[]>([]);
 
-  // Simulate real-time updates
+  // Initial fetch
   useEffect(() => {
-    const updateInterval = setInterval(() => {
-      setMetrics((prev) => ({
-        ...prev,
-        totalBags: prev.totalBags + (Math.random() > 0.7 ? 1 : 0),
-        productionRate: Math.max(20, prev.productionRate + (Math.random() - 0.5) * 3),
-        avgInterval: Math.max(1.5, prev.avgInterval + (Math.random() - 0.5) * 0.1),
-        consistency: Math.min(100, Math.max(40, prev.consistency + (Math.random() - 0.5) * 2)),
-      }));
+    fetch(`${API_URL}/api/dashboard/summary`)
+      .then(res => res.json())
+      .then(data => {
+        setMetrics(prev => ({
+          ...prev,
+          totalBags: data.totalBags,
+          productionRate: data.productionRate,
+          avgInterval: data.avgInterval,
+          consistency: data.consistency
+        }));
+      })
+      .catch(err => console.error("Error fetching dashboard summary:", err));
 
-      setIntervalData(generateIntervalData());
-      setHeatmapData(generateHeatmapData());
+    // Fallback data for charts if API doesn't provide them yet
+    setIntervalData(generateIntervalData());
+    setHeatmapData(generateHeatmapData());
+    setProductionGaps(generateProductionGaps());
+  }, []);
 
-      // Occasionally update production gaps
-      if (Math.random() > 0.8) {
-        setProductionGaps(generateProductionGaps());
+  // WebSocket for real-time updates
+  useEffect(() => {
+    const ws = new WebSocket(WS_URL);
+
+    ws.onmessage = (event) => {
+      const message = JSON.parse(event.data);
+      if (message.type === 'COUNT_EVENT') {
+        const eventData = message.data;
+        setMetrics((prev) => ({
+          ...prev,
+          totalBags: eventData.session_stats.total,
+          // Update other metrics if needed
+        }));
+
+        // Update charts on each event
+        setIntervalData(generateIntervalData());
+        setHeatmapData(generateHeatmapData());
       }
-    }, 3000);
+    };
 
-    return () => clearInterval(updateInterval);
+    ws.onerror = (error) => console.error("WebSocket error:", error);
+    ws.onclose = () => console.log("WebSocket connection closed");
+
+    return () => ws.close();
   }, []);
 
   const resetMetrics = useCallback(() => {

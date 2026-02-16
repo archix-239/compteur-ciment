@@ -1,4 +1,5 @@
-import { useState } from 'react';
+import { useState, useEffect } from 'react';
+import { API_URL } from '@/lib/api';
 import {
   Users,
   UserPlus,
@@ -43,7 +44,25 @@ const MOCK_CONNECTIONS = [
 ];
 
 export default function UserManagement() {
-  const [users] = useState(MOCK_USERS);
+  const [users, setUsers] = useState([]);
+
+  useEffect(() => {
+    fetch(`${API_URL}/api/users/`)
+      .then(res => res.json())
+      .then(data => {
+        const mappedUsers = data.map((u: any) => ({
+          id: u.id,
+          name: u.full_name || u.username,
+          email: `${u.username}@cement-factory.com`,
+          role: u.role === 'admin' ? 'Admin' : 'Opérateur',
+          status: u.is_active ? 'Actif' : 'Inactif',
+          initials: (u.full_name || u.username).substring(0, 2).toUpperCase(),
+          lastActive: 'Récemment'
+        }));
+        setUsers(mappedUsers);
+      })
+      .catch(err => console.error("Error fetching users:", err));
+  }, []);
 
   return (
     <div className="p-6 space-y-6">

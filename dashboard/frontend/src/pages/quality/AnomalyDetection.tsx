@@ -1,3 +1,5 @@
+import { useState, useEffect } from 'react';
+import { API_URL } from '@/lib/api';
 import {
   AlertTriangle,
   Image as ImageIcon,
@@ -46,6 +48,26 @@ const anomalies = [
 ];
 
 export default function AnomalyDetection() {
+  const [anomalies, setAnomalies] = useState([]);
+
+  useEffect(() => {
+    fetch(`${API_URL}/api/logs/`)
+      .then(res => res.json())
+      .then(data => {
+        const rejected = data.filter((l: any) => l.status === 'rejete').map((l: any) => ({
+          id: `AN-${l.id}`,
+          type: "Sac rejeté",
+          time: new Date(l.timestamp).toLocaleTimeString('fr-FR'),
+          severity: "high",
+          description: `Sac non conforme détecté avec un score de ${l.detection_score.toFixed(2)}`,
+          thumbnail: l.capture_url ? `${API_URL}${l.capture_url}` : "https://images.unsplash.com/photo-1565793298595-6a879b1d9492?q=80&w=400&auto=format&fit=crop",
+          status: "pending"
+        }));
+        setAnomalies(rejected);
+      })
+      .catch(err => console.error("Error fetching anomalies:", err));
+  }, []);
+
   return (
     <div className="p-6 space-y-6">
       <div className="flex items-center justify-between">

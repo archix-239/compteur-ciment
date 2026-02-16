@@ -1,4 +1,5 @@
 import { useState, useEffect } from 'react';
+import { API_URL, WS_URL } from '@/lib/api';
 import { Camera, Activity, Shield, AlertCircle, Maximize2, RefreshCcw } from 'lucide-react';
 import { Card } from '@/components/ui/card';
 import { Badge } from '@/components/ui/badge';
@@ -17,17 +18,34 @@ export default function LiveStream() {
   });
 
   useEffect(() => {
-    const interval = setInterval(() => {
-      setStats({
-        fps: 24 + Math.floor(Math.random() * 5),
-        latency: 45 + Math.floor(Math.random() * 20),
-        detectedObjects: Math.floor(Math.random() * 4),
-        verifiedBags: 142,
-        rejectedBags: 12
-      });
-      setStreamStatus('online');
-    }, 1000);
-    return () => clearInterval(interval);
+    // Initial fetch for stats
+    fetch(`${API_URL}/api/dashboard/summary`)
+      .then(res => res.json())
+      .then(data => {
+        setStats(prev => ({
+          ...prev,
+          verifiedBags: data.totalBags,
+          rejectedBags: data.rejectedBags
+        }));
+        setStreamStatus('online');
+      })
+      .catch(() => setStreamStatus('offline'));
+
+    // WebSocket for live updates
+    const ws = new WebSocket(WS_URL);
+    ws.onmessage = (event) => {
+      const message = JSON.parse(event.data);
+      if (message.type === 'COUNT_EVENT') {
+        const eventData = message.data;
+        setStats(prev => ({
+          ...prev,
+          verifiedBags: eventData.session_stats.total,
+          rejectedBags: eventData.session_stats.rejected
+        }));
+      }
+    };
+
+    return () => ws.close();
   }, []);
 
   return (
@@ -49,10 +67,18 @@ export default function LiveStream() {
       <div className="grid grid-cols-1 lg:grid-cols-4 gap-6">
         <div className="lg:col-span-3 space-y-4">
           <Card className="relative aspect-video bg-black overflow-hidden border-orange-500/20 group">
-            {/* Simulation de flux vidéo */}
-            <div className="absolute inset-0 flex items-center justify-center text-orange-500/20">
+            {/* Flux vidéo réel */}
+            <img
+              src={`${API_URL}/api/vision/video_feed`}
+              alt="Live Stream"
+              className="absolute inset-0 w-full h-full object-contain"
+              onError={(e) => {
+                e.currentTarget.style.display = 'none';
+                setStreamStatus('offline');
+              }}
+            />
+            <div className="absolute inset-0 flex items-center justify-center text-orange-500/20 pointer-events-none">
               <Camera className="w-20 h-20 opacity-20" />
-              <div className="absolute inset-0 bg-gradient-to-t from-black/60 to-transparent pointer-events-none" />
             </div>
 
             {/* Ligne Virtuelle */}

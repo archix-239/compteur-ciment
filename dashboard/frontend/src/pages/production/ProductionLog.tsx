@@ -1,4 +1,5 @@
-import { useState } from 'react';
+import { useState, useEffect } from 'react';
+import { API_URL } from '@/lib/api';
 import {
   Search,
   Filter,
@@ -46,7 +47,32 @@ const MOCK_LOGS = Array.from({ length: 20 }).map((_, i) => ({
 }));
 
 export default function ProductionLog() {
-  const [logs] = useState(MOCK_LOGS);
+  const [logs, setLogs] = useState([]);
+  const [loading, setLoading] = useState(true);
+
+  useEffect(() => {
+    fetch(`${API_URL}/api/logs/`)
+      .then(res => res.json())
+      .then(data => {
+        const mappedLogs = data.map((log: any) => ({
+          id: `B-${log.id}`,
+          timestamp: new Date(log.timestamp).toLocaleTimeString('fr-FR'),
+          detectionScore: log.detection_score.toFixed(2),
+          logoScore: log.logo_score.toFixed(2),
+          colorScore: log.color_score.toFixed(2),
+          status: log.status === 'conforme' ? 'Vérifié' : 'Rejeté',
+          interval: log.interval.toFixed(1) + 's',
+          uuid: log.identifier,
+          captureUrl: log.capture_url
+        }));
+        setLogs(mappedLogs);
+        setLoading(false);
+      })
+      .catch(err => {
+        console.error("Error fetching logs:", err);
+        setLoading(false);
+      });
+  }, []);
 
   return (
     <div className="p-6 space-y-6">
@@ -150,7 +176,13 @@ export default function ProductionLog() {
                     </div>
                   </TableCell>
                   <TableCell className="text-right">
-                    <Button variant="ghost" size="icon" className="h-8 w-8 text-zinc-500 hover:text-white" title="Voir Capture">
+                    <Button
+                      variant="ghost"
+                      size="icon"
+                      className="h-8 w-8 text-zinc-500 hover:text-white"
+                      title="Voir Capture"
+                      onClick={() => log.captureUrl && window.open(`${API_URL}${log.captureUrl}`, '_blank')}
+                    >
                       <Eye className="w-4 h-4" />
                     </Button>
                   </TableCell>

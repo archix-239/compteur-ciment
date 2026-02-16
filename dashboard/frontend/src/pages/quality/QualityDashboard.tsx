@@ -1,3 +1,5 @@
+import { useState, useEffect } from 'react';
+import { API_URL } from '@/lib/api';
 import {
   ShieldCheck,
   Target,
@@ -42,6 +44,15 @@ const distributionData = [
 ];
 
 export default function QualityDashboard() {
+  const [summary, setSummary] = useState(null);
+
+  useEffect(() => {
+    fetch(`${API_URL}/api/quality/summary`)
+      .then(res => res.json())
+      .then(data => setSummary(data))
+      .catch(err => console.error("Error fetching quality summary:", err));
+  }, []);
+
   return (
     <div className="p-6 space-y-6">
       <div>
@@ -52,11 +63,11 @@ export default function QualityDashboard() {
       <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-4">
         <Card className="p-4 bg-zinc-900/50 border-zinc-800 space-y-2">
           <div className="flex justify-between items-start">
-            <span className="text-xs font-medium text-zinc-500 uppercase tracking-wider">Taux de Confiance</span>
+            <span className="text-xs font-medium text-zinc-500 uppercase tracking-wider">Taux de Rejet</span>
             <Target className="w-4 h-4 text-orange-500" />
           </div>
           <div className="flex items-baseline gap-2">
-            <span className="text-3xl font-bold text-white">94.8%</span>
+            <span className="text-3xl font-bold text-white">{summary ? summary.rejectionRate.toFixed(1) : '0'}%</span>
             <span className="text-xs text-green-500 font-bold">Moyenne</span>
           </div>
         </Card>

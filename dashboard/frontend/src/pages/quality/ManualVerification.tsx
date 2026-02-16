@@ -1,4 +1,5 @@
-import { useState } from 'react';
+import { useState, useEffect } from 'react';
+import { API_URL } from '@/lib/api';
 import {
   ShieldCheck,
   XCircle,
@@ -52,9 +53,26 @@ const MOCK_HISTORY = [
 ];
 
 export default function ManualVerification() {
-  const [items, setItems] = useState(MOCK_REJECTED);
+  const [items, setItems] = useState([]);
   const [selectedItem, setSelectedItem] = useState<any>(null);
   const [showAddDialog, setShowAddDialog] = useState(false);
+
+  useEffect(() => {
+    fetch(`${API_URL}/api/logs/`)
+      .then(res => res.json())
+      .then(data => {
+        const rejected = data.filter((l: any) => l.status === 'rejete').map((l: any) => ({
+          id: `R-${l.id}`,
+          timestamp: new Date(l.timestamp).toLocaleTimeString('fr-FR'),
+          reason: 'Non conforme',
+          confidence: l.detection_score.toFixed(2),
+          status: 'Rejeté',
+          captureUrl: l.capture_url
+        }));
+        setItems(rejected);
+      })
+      .catch(err => console.error("Error fetching logs for verification:", err));
+  }, []);
 
   const handleVerify = (id: string) => {
     setItems(items.filter(item => item.id !== id));
@@ -160,10 +178,16 @@ export default function ManualVerification() {
                                 <div className="space-y-2">
                                   <Label>Capture</Label>
                                   <div className="aspect-square bg-black rounded-lg flex items-center justify-center border border-zinc-800 relative overflow-hidden">
-                                    <RotateCcw className="w-8 h-8 text-zinc-800" />
-                                    <div className="absolute inset-0 flex items-center justify-center text-[10px] text-zinc-600">
-                                      [CAPTURE SIMULÉE]
-                                    </div>
+                                    {selectedItem?.captureUrl ? (
+                                      <img src={`${API_URL}${selectedItem.captureUrl}`} alt="Capture" className="w-full h-full object-cover" />
+                                    ) : (
+                                      <>
+                                        <RotateCcw className="w-8 h-8 text-zinc-800" />
+                                        <div className="absolute inset-0 flex items-center justify-center text-[10px] text-zinc-600">
+                                          [CAPTURE NON DISPONIBLE]
+                                        </div>
+                                      </>
+                                    )}
                                   </div>
                                 </div>
                                 <div className="space-y-4">

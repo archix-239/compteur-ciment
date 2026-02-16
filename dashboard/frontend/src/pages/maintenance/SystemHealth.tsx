@@ -1,3 +1,5 @@
+import { useState, useEffect } from 'react';
+import { API_URL } from '@/lib/api';
 import {
   Activity,
   Server,
@@ -26,6 +28,20 @@ import { StatusBadge } from '@/components/StatusBadge';
  */
 
 export default function SystemHealth() {
+  const [health, setHealth] = useState(null);
+
+  useEffect(() => {
+    const fetchHealth = () => {
+      fetch(`${API_URL}/api/system/health`)
+        .then(res => res.json())
+        .then(data => setHealth(data))
+        .catch(err => console.error("Error fetching health:", err));
+    };
+    fetchHealth();
+    const interval = setInterval(fetchHealth, 5000);
+    return () => clearInterval(interval);
+  }, []);
+
   return (
     <div className="p-6 space-y-6">
       <PageHeader
@@ -87,23 +103,23 @@ export default function SystemHealth() {
             <div className="space-y-2">
               <div className="flex justify-between text-sm">
                 <span className="flex items-center gap-2 text-zinc-400"><Cpu className="w-3 h-3" /> Charge CPU</span>
-                <span className="font-mono text-white">42%</span>
+                <span className="font-mono text-white">{health ? health.cpu : 0}%</span>
               </div>
-              <Progress value={42} className="h-1.5" />
+              <Progress value={health ? health.cpu : 0} className="h-1.5" />
             </div>
             <div className="space-y-2">
               <div className="flex justify-between text-sm">
                 <span className="flex items-center gap-2 text-zinc-400"><Activity className="w-3 h-3" /> Utilisation RAM</span>
-                <span className="font-mono text-white">5.2 Go / 16 Go</span>
+                <span className="font-mono text-white">{health ? health.memory : 0}%</span>
               </div>
-              <Progress value={32} className="h-1.5" />
+              <Progress value={health ? health.memory : 0} className="h-1.5" />
             </div>
             <div className="space-y-2">
               <div className="flex justify-between text-sm">
                 <span className="flex items-center gap-2 text-zinc-400"><HardDrive className="w-3 h-3" /> Stockage NVMe</span>
-                <span className="font-mono text-white">1.2 To / 2.0 To</span>
+                <span className="font-mono text-white">{health ? health.disk : 0}%</span>
               </div>
-              <Progress value={60} className="h-1.5" />
+              <Progress value={health ? health.disk : 0} className="h-1.5" />
             </div>
 
             <div className="grid grid-cols-2 gap-4 pt-4 border-t border-zinc-800">
