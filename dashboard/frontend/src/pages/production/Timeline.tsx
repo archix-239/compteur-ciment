@@ -39,15 +39,15 @@ export default function Timeline() {
     <div className="p-6 space-y-6">
       <div className="flex items-center justify-between">
         <div>
-          <h1 className="text-2xl font-bold tracking-tight text-white">Production Timeline</h1>
-          <p className="text-muted-foreground">Historical visual analysis of production cycles and speed</p>
+          <h1 className="text-2xl font-bold tracking-tight text-white">Chronologie de Production</h1>
+          <p className="text-muted-foreground">Analyse visuelle historique des cycles de production et de la cadence</p>
         </div>
         <div className="flex gap-2">
           <Button variant="outline" className="gap-2 border-zinc-800 text-white">
-            <Filter className="w-4 h-4" /> Filter Range
+            <Filter className="w-4 h-4" /> Filtrer la Période
           </Button>
           <Button variant="outline" className="gap-2 border-zinc-800 text-white">
-            <Download className="w-4 h-4" /> Export Report
+            <Download className="w-4 h-4" /> Exporter le Rapport
           </Button>
         </div>
       </div>
@@ -57,7 +57,7 @@ export default function Timeline() {
           <div className="flex items-center justify-between">
             <div className="flex items-center gap-2 font-semibold text-white">
               <Activity className="w-5 h-5 text-orange-500" />
-              <span>Production Hourly Distribution (Last 24h)</span>
+              <span>Distribution Horaire de Production (Dernières 24h)</span>
             </div>
             <div className="flex gap-2">
               <Button variant="ghost" size="icon" className="h-8 w-8 border border-zinc-800 text-zinc-400 hover:text-white"><ZoomIn className="w-4 h-4" /></Button>
@@ -84,8 +84,8 @@ export default function Timeline() {
                 />
                 <Legend iconType="circle" wrapperStyle={{ fontSize: '12px', paddingTop: '20px' }} />
                 <Area yAxisId="left" type="monotone" dataKey="count" fill="url(#colorCountArea)" stroke="none" />
-                <Bar yAxisId="left" dataKey="count" fill="#f97316" radius={[4, 4, 0, 0]} barSize={20} name="Bags Counted" />
-                <Line yAxisId="right" type="monotone" dataKey="interval" stroke="#fbbf24" strokeWidth={2} dot={{ r: 2 }} name="Avg Interval (s)" />
+                <Bar yAxisId="left" dataKey="count" fill="#f97316" radius={[4, 4, 0, 0]} barSize={20} name="Sacs Comptés" />
+                <Line yAxisId="right" type="monotone" dataKey="interval" stroke="#fbbf24" strokeWidth={2} dot={{ r: 2 }} name="Intervalle Moyen (s)" />
               </ComposedChart>
             </ResponsiveContainer>
           </div>
@@ -93,45 +93,45 @@ export default function Timeline() {
 
         <div className="space-y-6">
           <Card className="p-4 space-y-4 bg-card/50 border-zinc-800">
-            <h3 className="text-sm font-bold text-white uppercase tracking-wider">Peak Analysis</h3>
+            <h3 className="text-sm font-bold text-white uppercase tracking-wider">Analyse des Pics</h3>
             <div className="space-y-4">
               <div className="p-3 rounded-lg bg-green-500/5 border border-green-500/20">
                 <div className="flex justify-between items-start">
-                  <span className="text-[10px] font-bold text-green-400 uppercase">Maximum Load</span>
+                  <span className="text-[10px] font-bold text-green-400 uppercase">Charge Maximum</span>
                   <ArrowUp className="w-4 h-4 text-green-400" />
                 </div>
-                <div className="text-xl font-bold font-mono text-white mt-1">1,312 bags/h</div>
-                <div className="text-[10px] text-zinc-500 mt-1">Today at 14:00</div>
+                <div className="text-xl font-bold font-mono text-white mt-1">1,312 sacs/h</div>
+                <div className="text-[10px] text-zinc-500 mt-1">Aujourd'hui à 14:00</div>
               </div>
 
               <div className="p-3 rounded-lg bg-red-500/5 border border-red-500/20">
                 <div className="flex justify-between items-start">
-                  <span className="text-[10px] font-bold text-red-400 uppercase">Minimum Load</span>
+                  <span className="text-[10px] font-bold text-red-400 uppercase">Charge Minimum</span>
                   <ArrowDown className="w-4 h-4 text-red-400" />
                 </div>
-                <div className="text-xl font-bold font-mono text-white mt-1">520 bags/h</div>
-                <div className="text-[10px] text-zinc-500 mt-1">Today at 03:00</div>
+                <div className="text-xl font-bold font-mono text-white mt-1">520 sacs/h</div>
+                <div className="text-[10px] text-zinc-500 mt-1">Aujourd'hui à 03:00</div>
               </div>
             </div>
           </Card>
 
           <Card className="p-4 space-y-4 bg-card/50 border-zinc-800">
-            <h3 className="text-sm font-bold text-white uppercase tracking-wider">Timeline Filters</h3>
+            <h3 className="text-sm font-bold text-white uppercase tracking-wider">Filtres</h3>
             <div className="space-y-3">
               <div className="space-y-1.5">
-                <span className="text-[10px] text-zinc-500 uppercase">Select Date</span>
+                <span className="text-[10px] text-zinc-500 uppercase">Sélectionner Date</span>
                 <Button variant="outline" className="w-full justify-start text-xs border-zinc-800 bg-zinc-900/50 text-white">
                   <CalendarIcon className="w-3 h-3 mr-2 text-orange-500" />
-                  August 27, 2025
+                  13 Mars 2024
                 </Button>
               </div>
               <div className="space-y-1.5">
-                <span className="text-[10px] text-zinc-500 uppercase">Quick Select</span>
+                <span className="text-[10px] text-zinc-500 uppercase">Sélection Rapide</span>
                 <div className="grid grid-cols-2 gap-2">
-                  <Button variant="secondary" className="h-7 text-[9px] bg-zinc-800 text-white">LAST 6H</Button>
-                  <Button variant="secondary" className="h-7 text-[9px] bg-zinc-800 text-white">LAST 24H</Button>
-                  <Button variant="secondary" className="h-7 text-[9px] bg-zinc-800 text-white">SHIFT A</Button>
-                  <Button variant="secondary" className="h-7 text-[9px] bg-zinc-800 text-white">SHIFT B</Button>
+                  <Button variant="secondary" className="h-7 text-[9px] bg-zinc-800 text-white font-bold uppercase">DERNIÈRES 6H</Button>
+                  <Button variant="secondary" className="h-7 text-[9px] bg-zinc-800 text-white font-bold uppercase">DERNIÈRES 24H</Button>
+                  <Button variant="secondary" className="h-7 text-[9px] bg-zinc-800 text-white font-bold uppercase">EQUIPE A</Button>
+                  <Button variant="secondary" className="h-7 text-[9px] bg-zinc-800 text-white font-bold uppercase">EQUIPE B</Button>
                 </div>
               </div>
             </div>

@@ -22,10 +22,15 @@ import AnomalyDetection from "./pages/quality/AnomalyDetection";
 import AlertManagement from "./pages/alerts/AlertManagement";
 import ProductionReports from "./pages/reports/ProductionReports";
 import DataExport from "./pages/reports/DataExport";
+import AuditTrail from "./pages/reports/AuditTrail";
 import UserManagement from "./pages/administration/UserManagement";
 import SystemSettings from "./pages/administration/SystemSettings";
+import DeviceManagement from "./pages/administration/DeviceManagement";
+import ApiManagement from "./pages/administration/ApiManagement";
 import PerformanceAnalytics from "./pages/analytics/PerformanceAnalytics";
 import SystemHealth from "./pages/maintenance/SystemHealth";
+import DatabaseManagement from "./pages/maintenance/DatabaseManagement";
+import Diagnostics from "./pages/maintenance/Diagnostics";
 import ThirdParty from "./pages/integration/ThirdParty";
 
 
@@ -119,6 +124,11 @@ function Router() {
           <DataExport />
         </Layout>
       </Route>
+      <Route path="/reports/audit">
+        <Layout activeRoute="audit">
+          <AuditTrail />
+        </Layout>
+      </Route>
 
       {/* Administration */}
       <Route path="/admin/users">
@@ -129,6 +139,16 @@ function Router() {
       <Route path="/admin/system">
         <Layout activeRoute="system">
           <SystemSettings />
+        </Layout>
+      </Route>
+      <Route path="/admin/devices">
+        <Layout activeRoute="devices">
+          <DeviceManagement />
+        </Layout>
+      </Route>
+      <Route path="/admin/api">
+        <Layout activeRoute="api-mgmt">
+          <ApiManagement />
         </Layout>
       </Route>
 
@@ -143,6 +163,16 @@ function Router() {
       <Route path="/maintenance/health">
         <Layout activeRoute="health">
           <SystemHealth />
+        </Layout>
+      </Route>
+      <Route path="/maintenance/database">
+        <Layout activeRoute="database">
+          <DatabaseManagement />
+        </Layout>
+      </Route>
+      <Route path="/maintenance/diagnostics">
+        <Layout activeRoute="diagnostics">
+          <Diagnostics />
         </Layout>
       </Route>
 

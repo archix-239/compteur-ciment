@@ -17,7 +17,9 @@ import {
   Wrench,
   Database,
   Cpu,
-  RefreshCw
+  RefreshCw,
+  Server,
+  History
 } from 'lucide-react';
 import { useState } from 'react';
 
@@ -106,6 +108,7 @@ export function Sidebar({ activeRoute = 'dashboard' }: SidebarProps) {
       items: [
         { id: 'reports', label: 'Rapports de Production', href: '/reports/production' },
         { id: 'export', label: 'Export de Données', href: '/reports/export' },
+        { id: 'audit', label: 'Audit Trail', href: '/reports/audit' },
       ]
     },
     {
@@ -114,6 +117,7 @@ export function Sidebar({ activeRoute = 'dashboard' }: SidebarProps) {
       items: [
         { id: 'users', label: 'Utilisateurs', href: '/admin/users' },
         { id: 'system', label: 'Paramètres Système', href: '/admin/system' },
+        { id: 'devices', label: 'Gestion Appareils', href: '/admin/devices' },
         { id: 'api-mgmt', label: 'Gestion API', href: '/admin/api' },
       ]
     },
@@ -121,7 +125,7 @@ export function Sidebar({ activeRoute = 'dashboard' }: SidebarProps) {
       title: 'Analytique',
       icon: TrendingUp,
       items: [
-        { id: 'analytics', label: 'Performance', href: '/analytics/performance' },
+        { id: 'analytics', label: 'Performance & OEE', href: '/analytics/performance' },
       ]
     },
     {
@@ -129,6 +133,7 @@ export function Sidebar({ activeRoute = 'dashboard' }: SidebarProps) {
       icon: Wrench,
       items: [
         { id: 'health', label: 'Santé Système', href: '/maintenance/health' },
+        { id: 'database', label: 'Gestion de la BD', href: '/maintenance/database' },
         { id: 'diagnostics', label: 'Outils Diagnostic', href: '/maintenance/diagnostics' },
       ]
     },
