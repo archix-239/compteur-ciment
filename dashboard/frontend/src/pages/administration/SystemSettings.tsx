@@ -164,7 +164,7 @@ export default function SystemSettings() {
                     <div className="flex items-center justify-between pt-2">
                        <div className="space-y-0.5">
                           <Label className="text-sm text-zinc-300">Nettoyage Automatique</Label>
-                          <p className="text-[10px] text-zinc-500 italic">Vider si disque > 90%</p>
+                          <p className="text-[10px] text-zinc-500 italic">Vider si disque &gt; 90%</p>
                        </div>
                        <Switch defaultChecked />
                     </div>
