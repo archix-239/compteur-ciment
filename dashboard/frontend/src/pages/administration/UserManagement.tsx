@@ -8,6 +8,7 @@ import {
   Trash2,
   Edit2,
   Search,
+  Filter,
   ShieldCheck,
   Clock,
   Lock,
