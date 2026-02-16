@@ -8,6 +8,8 @@ import Dashboard from "./pages/Dashboard";
 import Layout from "./components/Layout";
 
 // Import new pages
+import Login from "./pages/Login";
+import Profile from "./pages/Profile";
 import LiveStream from "./pages/monitoring/LiveStream";
 import ProductionLog from "./pages/production/ProductionLog";
 import SessionManagement from "./pages/production/SessionManagement";
@@ -37,9 +39,17 @@ import ThirdParty from "./pages/integration/ThirdParty";
 function Router() {
   return (
     <Switch>
+      <Route path="/login" component={Login} />
+
       <Route path="/">
         <Layout activeRoute="dashboard">
           <Dashboard />
+        </Layout>
+      </Route>
+
+      <Route path="/profile">
+        <Layout activeRoute="profile">
+          <Profile />
         </Layout>
       </Route>
 

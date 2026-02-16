@@ -2,6 +2,9 @@ import { Package, Zap, Clock, TrendingUp } from 'lucide-react';
 import { StatCard } from '@/components/StatCard';
 import { ProductionGaps } from '@/components/ProductionGaps';
 import { useProductionData } from '@/hooks/useProductionData';
+import { PageHeader } from '@/components/PageHeader';
+import { Button } from '@/components/ui/button';
+import { RefreshCw, Download } from 'lucide-react';
 import {
   BarChart,
   Bar,
@@ -24,36 +27,34 @@ export default function Dashboard() {
   const { totalBags, productionRate, avgInterval, consistency, firstHalfInterval, secondHalfInterval, slowdownPercent } = metrics;
 
   return (
-    <div className="min-h-screen bg-background">
-      {/* Header */}
-      <header className="border-b border-border bg-card/50 backdrop-blur-sm sticky top-0 z-50">
-        <div className="max-w-7xl mx-auto px-6 py-6">
-          <div className="flex items-center justify-between">
-            <div>
-              <h1 className="text-3xl font-bold font-mono text-foreground">
-                Suivi de Production <span className="text-orange-400">Sacs de Ciment</span>
-              </h1>
-              <p className="text-sm text-muted-foreground mt-1">
-                Analyse de Ligne de Convoyeur • Détection par IA (YOLOv11 + SAM3)
-              </p>
-            </div>
-            <div className="text-right">
-              <div className="text-sm text-green-400 font-medium">
-                ● {totalBags} sacs détectés — {(totalBags * 2.21).toFixed(1)}s de flux
-              </div>
-            </div>
+    <div className="min-h-screen bg-background p-6 space-y-8">
+      <PageHeader
+        title="Tableau de Bord de Production"
+        description="Analyse en temps réel de la ligne de convoyeur • Moteur YOLOv11"
+      >
+        <div className="text-right mr-4 hidden md:block">
+          <div className="text-[10px] text-zinc-500 uppercase font-bold tracking-widest mb-1">Status Actuel</div>
+          <div className="text-xs text-green-400 font-medium flex items-center gap-2">
+            <div className="w-1.5 h-1.5 rounded-full bg-green-500 animate-pulse" />
+            {totalBags} sacs détectés — {(totalBags * 2.21).toFixed(1)}s de flux
           </div>
         </div>
-      </header>
+        <Button variant="outline" className="border-zinc-800 text-white gap-2">
+          <RefreshCw className="w-4 h-4" /> Actualiser
+        </Button>
+        <Button className="bg-orange-600 hover:bg-orange-700 text-white gap-2">
+          <Download className="w-4 h-4" /> Rapport Flash
+        </Button>
+      </PageHeader>
 
-      {/* Main Content */}
-      <main className="max-w-7xl mx-auto px-6 py-8">
+      <main className="max-w-full">
         {/* KPI Cards */}
         <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-6 mb-8">
           <StatCard
             title="Total Sacs"
             value={totalBags}
             unit="sacs comptés"
+            description="Nombre total de sacs valides détectés par l'IA sur la session actuelle."
             icon={<Package className="w-5 h-5" />}
             highlighted
           />
@@ -61,6 +62,7 @@ export default function Dashboard() {
             title="Taux de Production"
             value={productionRate.toFixed(1)}
             unit="sacs / minute"
+            description="Vitesse moyenne de passage des sacs sur le convoyeur (moyenne glissante 5 min)."
             icon={<Zap className="w-5 h-5" />}
             trend={{ value: 5, direction: 'up' }}
           />
@@ -68,12 +70,14 @@ export default function Dashboard() {
             title="Intervalle Moyen"
             value={avgInterval.toFixed(2)}
             unit="secondes entre sacs"
+            description="Temps moyen écoulé entre deux détections successives."
             icon={<Clock className="w-5 h-5" />}
           />
           <StatCard
             title="Consistance"
             value={`${consistency}%`}
             unit="coefficient de variation"
+            description="Indice de régularité du flux. Plus il est proche de 100%, plus le flux est stable."
             icon={<TrendingUp className="w-5 h-5" />}
             trend={{ value: 8, direction: 'down' }}
           />
