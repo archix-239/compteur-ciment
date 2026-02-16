@@ -68,3 +68,7 @@ build/
 .env.development.local
 .env.test.local
 .env.production.local
+
+# Fichiers de BDD locale (si vous en utilisiez une)
+*.sqlite3
+
