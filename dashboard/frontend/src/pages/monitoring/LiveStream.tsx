@@ -3,6 +3,8 @@ import { Camera, Activity, Shield, AlertCircle, Maximize2, RefreshCcw } from 'lu
 import { Card } from '@/components/ui/card';
 import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
+import { PageHeader } from '@/components/PageHeader';
+import { StatusBadge } from '@/components/StatusBadge';
 
 export default function LiveStream() {
   const [streamStatus, setStreamStatus] = useState<'online' | 'offline' | 'connecting'>('connecting');
@@ -30,21 +32,19 @@ export default function LiveStream() {
 
   return (
     <div className="p-6 space-y-6">
-      <div className="flex items-center justify-between">
-        <div>
-          <h1 className="text-2xl font-bold tracking-tight text-white">Visualisation en Direct</h1>
-          <p className="text-muted-foreground">Surveillance temps réel et overlay de détection IA</p>
-        </div>
-        <div className="flex items-center gap-3">
-          <Badge variant={streamStatus === 'online' ? 'default' : 'destructive'} className="flex items-center gap-1 px-3 py-1">
-            <div className={`w-2 h-2 rounded-full ${streamStatus === 'online' ? 'bg-green-400 animate-pulse' : 'bg-red-400'}`} />
-            {streamStatus === 'online' ? 'EN LIGNE' : 'HORS LIGNE'}
-          </Badge>
-          <Button variant="outline" size="sm" className="gap-2 border-zinc-800 text-white">
-            <RefreshCcw className="w-4 h-4" /> Reconnexion
-          </Button>
-        </div>
-      </div>
+      <PageHeader
+        title="Visualisation en Direct"
+        description="Surveillance temps réel et overlay de détection IA"
+        breadcrumbs={[{ label: 'Monitoring' }, { label: 'Flux en Direct' }]}
+      >
+        <StatusBadge
+          status={streamStatus}
+          label={streamStatus === 'online' ? 'EN LIGNE' : streamStatus === 'connecting' ? 'CONNEXION...' : 'HORS LIGNE'}
+        />
+        <Button variant="outline" size="sm" className="gap-2 border-zinc-800 text-white">
+          <RefreshCcw className="w-4 h-4" /> Reconnexion
+        </Button>
+      </PageHeader>
 
       <div className="grid grid-cols-1 lg:grid-cols-4 gap-6">
         <div className="lg:col-span-3 space-y-4">

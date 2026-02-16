@@ -6,6 +6,7 @@ import {
   ShieldCheck,
   Bell,
   FileText,
+  User,
   Users,
   TrendingUp,
   Activity,
@@ -147,8 +148,8 @@ export function Sidebar({ activeRoute = 'dashboard' }: SidebarProps) {
   ];
 
   return (
-    <aside className="fixed left-0 top-0 h-screen w-72 bg-sidebar border-r border-sidebar-border flex flex-col overflow-y-auto custom-scrollbar">
-      <div className="p-6 border-b border-sidebar-border sticky top-0 bg-sidebar z-10">
+    <aside className="fixed left-0 top-0 h-screen w-72 bg-sidebar border-r border-sidebar-border flex flex-col overflow-hidden">
+      <div className="p-6 border-b border-sidebar-border bg-sidebar z-10 shrink-0">
         <div className="flex items-center gap-3">
           <div className="w-10 h-10 rounded bg-gradient-to-br from-orange-500 to-orange-600 flex items-center justify-center shrink-0">
             <Package className="w-6 h-6 text-white" />
@@ -160,7 +161,7 @@ export function Sidebar({ activeRoute = 'dashboard' }: SidebarProps) {
         </div>
       </div>
 
-      <nav className="flex-1 px-3 py-6 space-y-4">
+      <nav className="flex-1 px-3 py-6 space-y-4 overflow-y-auto custom-scrollbar">
         {menuSections.map((section) => {
           const Icon = section.icon;
           const sectionKey = section.title.toLowerCase().normalize("NFD").replace(/[\u0300-\u036f]/g, "");
@@ -207,11 +208,24 @@ export function Sidebar({ activeRoute = 'dashboard' }: SidebarProps) {
         })}
       </nav>
 
-      <div className="p-4 border-t border-sidebar-border sticky bottom-0 bg-sidebar">
+      <div className="p-4 border-t border-sidebar-border bg-sidebar shrink-0 space-y-1">
+        <a
+          href="/profile"
+          className={`
+            flex items-center gap-3 px-4 py-3 rounded-lg w-full
+            transition-all duration-200 text-sm font-medium
+            ${activeRoute === 'profile'
+              ? 'bg-orange-500/10 text-orange-400 border border-orange-500/20'
+              : 'text-sidebar-foreground/70 hover:bg-sidebar-accent/20 hover:text-sidebar-foreground'}
+          `}
+        >
+          <User className="w-5 h-5" />
+          <span>Mon Profil</span>
+        </a>
         <button
           className="
             flex items-center gap-3 px-4 py-3 rounded-lg w-full
-            text-sidebar-foreground/70 hover:bg-sidebar-accent/20 hover:text-sidebar-foreground
+            text-sidebar-foreground/70 hover:bg-sidebar-accent/20 hover:text-red-400
             transition-all duration-200 text-sm font-medium
           "
         >

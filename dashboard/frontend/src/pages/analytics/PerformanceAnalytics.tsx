@@ -17,6 +17,7 @@ import {
 import { Card } from '@/components/ui/card';
 import { Button } from '@/components/ui/button';
 import { Badge } from '@/components/ui/badge';
+import { PageHeader } from '@/components/PageHeader';
 import {
   LineChart,
   Line,
@@ -54,20 +55,18 @@ const dataRepartition = [
 export default function PerformanceAnalytics() {
   return (
     <div className="p-6 space-y-6">
-      <div className="flex flex-col md:flex-row md:items-center justify-between gap-4">
-        <div>
-          <h1 className="text-2xl font-bold tracking-tight text-white">Analytique Avancée & OEE</h1>
-          <p className="text-muted-foreground">Indicateurs de performance globale et prévisions basées sur l'historique</p>
-        </div>
-        <div className="flex items-center gap-2">
-          <Button variant="outline" className="border-zinc-800 text-white gap-2">
-            <Calendar className="w-4 h-4" /> 24 Dernières Heures
-          </Button>
-          <Button className="bg-orange-600 hover:bg-orange-700 text-white gap-2">
-            <Download className="w-4 h-4" /> Export Rapport OEE
-          </Button>
-        </div>
-      </div>
+      <PageHeader
+        title="Analytique Avancée & OEE"
+        description="Indicateurs de performance globale et prévisions basées sur l'historique"
+        breadcrumbs={[{ label: 'Analytique', href: '#' }, { label: 'Performance' }]}
+      >
+        <Button variant="outline" className="border-zinc-800 text-white gap-2">
+          <Calendar className="w-4 h-4" /> 24 Dernières Heures
+        </Button>
+        <Button className="bg-orange-600 hover:bg-orange-700 text-white gap-2">
+          <Download className="w-4 h-4" /> Export Rapport OEE
+        </Button>
+      </PageHeader>
 
       {/* TRS / OEE Section */}
       <div className="grid grid-cols-1 lg:grid-cols-4 gap-4">
