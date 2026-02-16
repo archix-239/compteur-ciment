@@ -17,6 +17,8 @@ import { Card } from '@/components/ui/card';
 import { Button } from '@/components/ui/button';
 import { Progress } from '@/components/ui/progress';
 import { Badge } from '@/components/ui/badge';
+import { PageHeader } from '@/components/PageHeader';
+import { StatusBadge } from '@/components/StatusBadge';
 
 /**
  * System Health Dashboard
@@ -26,21 +28,16 @@ import { Badge } from '@/components/ui/badge';
 export default function SystemHealth() {
   return (
     <div className="p-6 space-y-6">
-      <div className="flex items-center justify-between">
-        <div>
-          <h1 className="text-2xl font-bold tracking-tight text-white">Santé Système</h1>
-          <p className="text-muted-foreground">Surveillance de l'infrastructure et état des services</p>
-        </div>
-        <div className="flex gap-3">
-          <Badge variant="outline" className="px-3 py-1 bg-green-500/10 text-green-400 border-green-500/20 gap-2">
-            <div className="w-1.5 h-1.5 rounded-full bg-green-400 animate-pulse" />
-            SYSTÈME OPÉRATIONNEL
-          </Badge>
-          <Button variant="outline" className="gap-2 border-zinc-800 text-white hover:bg-zinc-900">
-            <RefreshCw className="w-4 h-4" /> Actualiser
-          </Button>
-        </div>
-      </div>
+      <PageHeader
+        title="Santé Système"
+        description="Surveillance de l'infrastructure et état des services"
+        breadcrumbs={[{ label: 'Maintenance' }, { label: 'Santé Système' }]}
+      >
+        <StatusBadge status="online" label="SYSTÈME OPÉRATIONNEL" />
+        <Button variant="outline" className="gap-2 border-zinc-800 text-white hover:bg-zinc-900">
+          <RefreshCw className="w-4 h-4" /> Actualiser
+        </Button>
+      </PageHeader>
 
       <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">
         {/* Core Services */}

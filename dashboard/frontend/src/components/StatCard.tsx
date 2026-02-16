@@ -1,9 +1,12 @@
 import { ReactNode } from 'react';
+import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from '@/components/ui/tooltip';
+import { Info } from 'lucide-react';
 
 interface StatCardProps {
   title: string;
   value: string | number;
   unit?: string;
+  description?: string;
   icon?: ReactNode;
   trend?: {
     value: number;
@@ -21,6 +24,7 @@ export function StatCard({
   title,
   value,
   unit,
+  description,
   icon,
   trend,
   highlighted = false,
@@ -28,7 +32,7 @@ export function StatCard({
   return (
     <div
       className={`
-        rounded-lg p-6 transition-all duration-300 animate-fadeInUp
+        rounded-lg p-6 transition-all duration-300 animate-fadeInUp relative group/card
         ${
           highlighted
             ? 'bg-gradient-to-br from-orange-950 to-orange-900 border-2 border-orange-500 shadow-lg shadow-orange-500/20'
@@ -37,9 +41,23 @@ export function StatCard({
       `}
     >
       <div className="flex items-start justify-between mb-4">
-        <h3 className="text-sm font-medium text-muted-foreground uppercase tracking-wider">
-          {title}
-        </h3>
+        <div className="flex items-center gap-2">
+          <h3 className="text-sm font-medium text-muted-foreground uppercase tracking-wider">
+            {title}
+          </h3>
+          {description && (
+            <TooltipProvider>
+              <Tooltip>
+                <TooltipTrigger asChild>
+                  <Info className="w-3 h-3 text-zinc-600 cursor-help hover:text-zinc-400 transition-colors" />
+                </TooltipTrigger>
+                <TooltipContent className="bg-zinc-950 border-zinc-800 text-[10px] text-zinc-400 max-w-[200px]">
+                  {description}
+                </TooltipContent>
+              </Tooltip>
+            </TooltipProvider>
+          )}
+        </div>
         {icon && (
           <div className={highlighted ? 'text-orange-400' : 'text-muted-foreground'}>
             {icon}
