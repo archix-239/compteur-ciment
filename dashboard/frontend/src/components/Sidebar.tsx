@@ -6,6 +6,7 @@ import {
   ShieldCheck,
   Bell,
   FileText,
+  User,
   Users,
   TrendingUp,
   Activity,
