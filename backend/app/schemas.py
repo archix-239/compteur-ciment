@@ -63,6 +63,15 @@ class SystemSetting(SystemSettingBase):
     class Config:
         from_attributes = True
 
+class CameraSettings(BaseModel):
+    source_type: str
+    url: str
+    resolution: str
+    fps: int
+    brightness: int
+    contrast: int
+    auto_focus: bool
+
 class Token(BaseModel):
     access_token: str
     token_type: str

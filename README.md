@@ -84,3 +84,36 @@ npm run dev
 - `dashboard/frontend/src/` : Code source de l'interface React.
 - `models/` : Contient le modèle YOLO `best_V5.pt`.
 - `backend/static/captures/` : Dossier de stockage des snapshots de production.
+
+## 📈 État d'Avancement de l'Intégration
+
+### 1. Configuration
+- [x] Paramètres Caméra (Connecté)
+- [ ] Templates (Mocks)
+- [ ] Configuration Modèle (Mocks)
+- [ ] Ligne Virtuelle (Mocks)
+
+### 2. Production
+- [x] Journal de Production (Connecté)
+- [x] Gestion des Sessions (Connecté)
+- [ ] Chronologie (Mocks)
+
+### 3. Monitoring
+- [x] Tableau de Bord (Connecté)
+- [x] Flux en Direct (Connecté)
+
+### 4. Qualité
+- [x] Qualité de Détection (Connecté)
+- [x] Détection des Anomalies (Connecté)
+- [x] Vérification Manuelle (Connecté)
+
+### 5. Administration
+- [x] Gestion des Utilisateurs (Connecté)
+- [ ] Paramètres Système (Mocks)
+- [ ] Gestion du Matériel (Mocks)
+- [ ] Gestion de l'API (Mocks)
+
+### 6. Autres
+- [x] Santé Système (Connecté)
+- [ ] Alertes (Mocks)
+- [x] Rapports (Partiellement Connecté)

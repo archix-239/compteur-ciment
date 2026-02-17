@@ -35,9 +35,11 @@ class ConnectionManager:
                 pass
 
 manager = ConnectionManager()
+main_loop = None
 
 # Vision Event Callback
 def handle_vision_event(event_data):
+    global main_loop
     # This runs in the vision thread, so we need to use SessionLocal and broadcast via loop
     db = SessionLocal()
     try:
@@ -84,15 +86,10 @@ def handle_vision_event(event_data):
         }
 
         # Broadcast via asyncio in a thread-safe way
-        try:
-            loop = asyncio.get_event_loop()
-            if loop.is_running():
-                loop.call_soon_threadsafe(
-                    lambda: asyncio.create_task(manager.broadcast(json.dumps(message)))
-                )
-        except RuntimeError:
-            # Handle cases where the loop is not yet running or accessible
-            pass
+        if main_loop and main_loop.is_running():
+            main_loop.call_soon_threadsafe(
+                lambda: asyncio.create_task(manager.broadcast(json.dumps(message)))
+            )
 
     except Exception as e:
         print(f"Error handling vision event: {e}")
@@ -102,6 +99,8 @@ def handle_vision_event(event_data):
 # Startup & Shutdown events
 @app.on_event("startup")
 async def startup_event():
+    global main_loop
+    main_loop = asyncio.get_running_loop()
     v_engine = vision_engine.get_vision_engine()
     v_engine.set_on_count_callback(handle_vision_event)
     v_engine.start()
@@ -211,6 +210,69 @@ async def get_quality_summary(db: Session = Depends(get_db)):
         "avgLogoScore": 0.92, # Simulated average
         "avgColorScore": 0.88 # Simulated average
     }
+
+@app.get("/api/settings/camera", response_model=schemas.CameraSettings)
+async def get_camera_settings(db: Session = Depends(get_db)):
+    keys = ["camera_source_type", "camera_url", "camera_resolution", "camera_fps", "camera_brightness", "camera_contrast", "camera_auto_focus"]
+    settings = db.query(models.SystemSetting).filter(models.SystemSetting.key.in_(keys)).all()
+    settings_dict = {s.key: s.value for s in settings}
+
+    return {
+        "source_type": settings_dict.get("camera_source_type", "webcam"),
+        "url": settings_dict.get("camera_url", "0"),
+        "resolution": settings_dict.get("camera_resolution", "720p"),
+        "fps": int(settings_dict.get("camera_fps", "30")),
+        "brightness": int(settings_dict.get("camera_brightness", "50")),
+        "contrast": int(settings_dict.get("camera_contrast", "50")),
+        "auto_focus": settings_dict.get("camera_auto_focus", "true") == "true"
+    }
+
+@app.post("/api/settings/camera")
+async def update_camera_settings(settings: schemas.CameraSettings, db: Session = Depends(get_db)):
+    data = {
+        "camera_source_type": settings.source_type,
+        "camera_url": settings.url,
+        "camera_resolution": settings.resolution,
+        "camera_fps": str(settings.fps),
+        "camera_brightness": str(settings.brightness),
+        "camera_contrast": str(settings.contrast),
+        "camera_auto_focus": "true" if settings.auto_focus else "false"
+    }
+
+    for key, value in data.items():
+        db_setting = db.query(models.SystemSetting).filter(models.SystemSetting.key == key).first()
+        if db_setting:
+            db_setting.value = value
+        else:
+            db_setting = models.SystemSetting(key=key, value=value)
+            db.add(db_setting)
+
+    db.commit()
+
+    # Update vision engine
+    v_engine = vision_engine.get_vision_engine()
+    v_engine.update_params(
+        source=settings.url if settings.source_type != "webcam" else 0,
+        fps=settings.fps
+    )
+
+    return {"message": "Settings updated successfully"}
+
+@app.post("/api/vision/test_connection")
+async def test_camera_connection(db: Session = Depends(get_db)):
+    # Get current source from DB or use provided one? Page seems to use current state.
+    # For simplicity, we check the one in DB
+    url_setting = db.query(models.SystemSetting).filter(models.SystemSetting.key == "camera_url").first()
+    source = url_setting.value if url_setting else "0"
+    if source.isdigit():
+        source = int(source)
+
+    cap = cv2.VideoCapture(source)
+    if cap.isOpened():
+        cap.release()
+        return {"status": "success", "message": "Connection successful"}
+    else:
+        return {"status": "error", "message": "Failed to connect to camera"}
 
 @app.websocket("/ws")
 async def websocket_endpoint(websocket: WebSocket):

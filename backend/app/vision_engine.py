@@ -62,6 +62,16 @@ class VisionEngine:
     def set_on_count_callback(self, callback):
         self.on_count_callback = callback
 
+    def update_params(self, source=None, fps=None):
+        restart = False
+        if source is not None and source != self.video_source:
+            self.video_source = source
+            restart = True
+
+        if restart and self.running:
+            self.stop()
+            self.start()
+
     def start(self):
         if self.running:
             return
