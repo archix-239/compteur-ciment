@@ -282,9 +282,23 @@ async def test_camera_connection(settings: schemas.CameraSettings):
         except ValueError:
             test_source = 0
 
-    # 2. Test d'ouverture
-    print(f"Testing connection with source: {test_source} (Type: {type(test_source)})")
+    # 2. Éviter le conflit d'accès si le moteur utilise déjà cette source
+    if v_engine.running and v_engine.video_source == test_source:
+        print(f"Test connection: Source {test_source} is already managed by VisionEngine.")
+        # On met à jour les paramètres (luminosité/contraste) en direct
+        v_engine.update_params(
+            source=test_source,
+            fps=settings.fps,
+            brightness=settings.brightness,
+            contrast=settings.contrast
+        )
+        # On considère que c'est un succès si le moteur tourne
+        return {"status": "success", "message": "Connection active (managed by engine)"}
 
+    # 3. Test d'ouverture pour une NOUVELLE source
+    print(f"Testing connection with NEW source: {test_source} (Type: {type(test_source)})")
+
+    # Sur Windows, CAP_DSHOW peut aider à éviter certains conflits MSMF
     cap = cv2.VideoCapture(test_source)
     is_opened = cap.isOpened()
 
@@ -296,7 +310,7 @@ async def test_camera_connection(settings: schemas.CameraSettings):
         if not ret:
             return {"status": "error", "message": "Camera opened but failed to read frame"}
 
-        # 3. Si succès, on met à jour le moteur immédiatement pour voir le flux
+        # 4. Si succès, on met à jour le moteur pour basculer sur cette nouvelle source
         v_engine.update_params(
             source=test_source,
             fps=settings.fps,

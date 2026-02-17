@@ -69,13 +69,16 @@ class VisionEngine:
 
     def update_params(self, source=None, fps=None, brightness=None, contrast=None):
         restart = False
+
+        # Normalisation de la source pour comparaison
+        norm_source = source
+        if isinstance(source, str) and source.isdigit():
+            norm_source = int(source)
+
         with self.frame_lock:
-            if source is not None and source != self.video_source:
-                # Handle '0' or digit strings for webcams
-                if isinstance(source, str) and source.isdigit():
-                    self.video_source = int(source)
-                else:
-                    self.video_source = source
+            if norm_source is not None and norm_source != self.video_source:
+                print(f"VisionEngine: Source change detected {self.video_source} -> {norm_source}")
+                self.video_source = norm_source
                 restart = True
 
             if brightness is not None:
@@ -85,6 +88,7 @@ class VisionEngine:
 
         if restart and self.running:
             self.stop()
+            time.sleep(0.5) # Petit délai pour libérer le hardware
             self.start()
 
     def _apply_software_processing(self, frame):
