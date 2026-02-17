@@ -2,7 +2,7 @@
 **/node_modules
 .pnpm-store/
 
-# Environnement virtuel
+# Virtual environments
 venv/
 .venv/
 env/
@@ -37,127 +37,48 @@ build/
 ehthumbs.db
 Thumbs.db
 
-# --- GLOBAL / SYSTÈME ---
-.DS_Store
-Thumbs.db
-*.log
-
-# Base de données SQLite (On ne versionne généralement pas la DB binaire, sauf si elle est vide/exemple)
-*.db
-*.sqlite3
-locate_m3_backend/database/*.db
-
-# --- Dosier d'images ---
-static/
-/tests
-/test-results
-
-# --- GLOBAL / SYSTÈME ---
-.DS_Store
-Thumbs.db
-*.log
-
-# Flask instances
-instance/
-.webassets-cache
-
-# --- FRONTEND (Node / React) ---
-# Dépendances (Très lourd, on installe via npm install)
-node_modules/
-npm-debug.log*
-yarn-debug.log*
-yarn-error.log*
-
-# Build de production
-dist/
-build/
-
-# Environnement local
-.env.local
-.env.development.local
-.env.test.local
-.env.production.local
-
-# Fichiers de BDD locale (si vous en utilisiez une)
-*.sqlite3
-
 # Logs
-logs
 *.log
+logs/
 npm-debug.log*
 yarn-debug.log*
 yarn-error.log*
 pnpm-debug.log*
-lerna-debug.log*
-
-# Runtime data
-pids
-*.pid
-*.seed
-*.pid.lock
-
-# Coverage directory used by tools like istanbul
-coverage/
-*.lcov
-
-# nyc test coverage
-.nyc_output
-
-# Dependency directories
-jspm_packages/
-
-# TypeScript cache
-*.tsbuildinfo
-
-# Optional npm cache directory
-.npm
-
-# Optional eslint cache
-.eslintcache
-
-# Microbundle cache
-.rpt2_cache/
-.rts2_cache_cjs/
-.rts2_cache_es/
-.rts2_cache_umd/
-
-# Optional REPL history
-.node_repl_history
-
-# Output of 'npm pack'
-*.tgz
-
-# Yarn Integrity file
-.yarn-integrity
-
-# parcel-bundler cache (https://parceljs.org/)
-.cache
-.parcel-cache
-
-# Next.js build output
-.next
-
-# Nuxt.js build / generate output
-.nuxt
-
-# Gatsby files
-.cache/
-
-# Storybook build outputs
-.out
-.storybook-out
-
-# Temporary folders
-tmp/
-temp/
-
-*.pyc
-__pycache__/
 
 # Database
 *.db
 *.sqlite
 *.sqlite3
 
-# Webdev artifacts (checkpoint zips, migrations, etc.)
-.webdev/
+# Python
+__pycache__/
+*.py[cod]
+*$py.class
+*.so
+.Python
+build/
+develop-eggs/
+dist/
+downloads/
+eggs/
+.eggs/
+lib/
+lib64/
+parts/
+sdist/
+var/
+wheels/
+*.egg-info/
+.installed.cfg
+*.egg
+
+# Static/Uploads
+backend/static/captures/
+backend/static/demo_conveyor.mp4
+
+# Test results
+/tests
+/test-results
+.nyc_output
+coverage/
+*.lcov

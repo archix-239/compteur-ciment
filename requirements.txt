@@ -1,26 +1,22 @@
 # Core Dependencies
-FastAPI==0.115.0
-uvicorn==0.30.6
-sqlalchemy==2.0.35
-python-multipart==0.0.9
-python-jose[cryptography]==3.3.0
-passlib[bcrypt]==1.7.4
-psutil==7.0.0
+FastAPI>=0.115.0
+uvicorn[standard]>=0.30.0
+sqlalchemy>=2.0.0
+python-multipart>=0.0.9
+python-jose[cryptography]>=3.3.0
+passlib[bcrypt]>=1.7.4
+psutil>=5.9.0
 
 # Vision & AI
-ultralytics==8.3.182
-opencv-python==4.12.0.88
-torch==2.8.0
-torchvision==0.23.0
-pyzbar==0.1.9
+ultralytics>=8.3.0
+opencv-python>=4.10.0.0
+torch>=2.4.0
+torchvision>=0.19.0
+pyzbar>=0.1.9
 
 # Utilities
-requests==2.32.5
-python-dateutil==2.9.0.post0
-PyYAML==6.0.2
-tqdm==4.67.1
-pillow==11.3.0
-
-# Legacy support (if needed)
-Flask==3.1.2
-flask-cors==6.0.1
+requests>=2.32.0
+python-dateutil>=2.9.0
+PyYAML>=6.0.0
+tqdm>=4.66.0
+pillow>=10.0.0

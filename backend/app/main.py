@@ -229,9 +229,19 @@ async def get_camera_settings(db: Session = Depends(get_db)):
 
 @app.post("/api/settings/camera")
 async def update_camera_settings(settings: schemas.CameraSettings, db: Session = Depends(get_db)):
+    # 1. Détermination propre de la source (Force INT pour webcam)
+    final_source = settings.url
+    if settings.source_type == "webcam":
+        try:
+            # On force 0 si c'est vide ou si c'est "0"
+            final_source = int(settings.url) if settings.url and settings.url.isdigit() else 0
+        except ValueError:
+            final_source = 0
+
+    # 2. Mise à jour DB
     data = {
         "camera_source_type": settings.source_type,
-        "camera_url": settings.url,
+        "camera_url": settings.url, # On garde la string en DB pour l'affichage frontend
         "camera_resolution": settings.resolution,
         "camera_fps": str(settings.fps),
         "camera_brightness": str(settings.brightness),
@@ -249,10 +259,10 @@ async def update_camera_settings(settings: schemas.CameraSettings, db: Session =
 
     db.commit()
 
-    # Update vision engine
+    # 3. Mise à jour Moteur Vision (Avec la source typée correctement)
     v_engine = vision_engine.get_vision_engine()
     v_engine.update_params(
-        source=settings.url if settings.source_type != "webcam" else 0,
+        source=final_source,
         fps=settings.fps,
         brightness=settings.brightness,
         contrast=settings.contrast
@@ -264,32 +274,38 @@ async def update_camera_settings(settings: schemas.CameraSettings, db: Session =
 async def test_camera_connection(settings: schemas.CameraSettings):
     v_engine = vision_engine.get_vision_engine()
 
-    # Test values from form
-    source = settings.url if settings.source_type != "webcam" else settings.url
-    if isinstance(source, str) and source.isdigit():
-        source = int(source)
+    # 1. Logique stricte pour la source
+    test_source = settings.url
+    if settings.source_type == "webcam":
+        try:
+            test_source = int(settings.url) if settings.url and settings.url.isdigit() else 0
+        except ValueError:
+            test_source = 0
 
-    cap = cv2.VideoCapture(source)
-    if cap.isOpened():
+    # 2. Test d'ouverture
+    print(f"Testing connection with source: {test_source} (Type: {type(test_source)})")
+
+    cap = cv2.VideoCapture(test_source)
+    is_opened = cap.isOpened()
+
+    if is_opened:
+        # Lire une frame pour être sûr
+        ret, _ = cap.read()
         cap.release()
-        # If connection successful, update engine with these temporary settings for preview
+
+        if not ret:
+            return {"status": "error", "message": "Camera opened but failed to read frame"}
+
+        # 3. Si succès, on met à jour le moteur immédiatement pour voir le flux
         v_engine.update_params(
-            source=source,
+            source=test_source,
             fps=settings.fps,
             brightness=settings.brightness,
             contrast=settings.contrast
         )
         return {"status": "success", "message": "Connection successful"}
     else:
-        # If it fails, we still might want to show the fallback in the engine?
-        # Actually the user wants to see the fallback if it fails.
-        v_engine.update_params(
-            source=source,
-            fps=settings.fps,
-            brightness=settings.brightness,
-            contrast=settings.contrast
-        )
-        return {"status": "success", "message": "Source tested (using fallback if unavailable)"}
+        return {"status": "error", "message": "Failed to open camera source"}
 
 @app.websocket("/ws")
 async def websocket_endpoint(websocket: WebSocket):
