@@ -2,19 +2,17 @@
 **/node_modules
 .pnpm-store/
 
-<<<<<<< HEAD
 # Environnement virtuel
 venv/
 .venv/
 env/
 ENV/
 .env
-=======
+
 # Build outputs
 dist/
 build/
 *.dist
->>>>>>> evaluation-audit-technique-15092829130921045862
 
 # Environment variables
 .env
@@ -39,7 +37,6 @@ build/
 ehthumbs.db
 Thumbs.db
 
-<<<<<<< HEAD
 # --- GLOBAL / SYSTÈME ---
 .DS_Store
 Thumbs.db
@@ -84,7 +81,6 @@ build/
 # Fichiers de BDD locale (si vous en utilisiez une)
 *.sqlite3
 
-=======
 # Logs
 logs
 *.log
@@ -155,6 +151,9 @@ jspm_packages/
 tmp/
 temp/
 
+*.pyc
+__pycache__/
+
 # Database
 *.db
 *.sqlite
@@ -162,4 +161,3 @@ temp/
 
 # Webdev artifacts (checkpoint zips, migrations, etc.)
 .webdev/
->>>>>>> evaluation-audit-technique-15092829130921045862
