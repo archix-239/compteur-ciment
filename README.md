@@ -84,3 +84,44 @@ npm run dev
 - `dashboard/frontend/src/` : Code source de l'interface React.
 - `models/` : Contient le modèle YOLO `best_V5.pt`.
 - `backend/static/captures/` : Dossier de stockage des snapshots de production.
+
+---
+
+## État d'Avancement — Intégration Backend ↔ Frontend
+
+Suivi de l'intégration réelle (remplacement des données fictives par des appels API) pour chaque interface du dashboard.
+
+| # | Interface | Statut | Détails |
+|---|-----------|--------|---------|
+| 1 | **Configuration — Paramètres Caméra** | Fait | GET/PUT `/api/config/camera`, POST `/api/config/camera/test` (test réel OpenCV). Formulaire connecté, sauvegarde en BDD, test de connexion caméra fonctionnel. |
+| 2 | Configuration — Modèle IA | En attente | — |
+| 3 | Configuration — Ligne Virtuelle | En attente | — |
+| 4 | Configuration — Templates | En attente | — |
+| 5 | Monitoring — Flux en Direct | En attente | — |
+| 6 | Production — Gestion des Sessions | En attente | — |
+| 7 | Production — Journal de Production | En attente | — |
+| 8 | Production — Timeline | En attente | — |
+| 9 | Qualité — Tableau de Bord | En attente | — |
+| 10 | Qualité — Vérification Manuelle | En attente | — |
+| 11 | Qualité — Détection d'Anomalies | En attente | — |
+| 12 | Alertes — Gestion des Alertes | En attente | — |
+| 13 | Rapports — Production | En attente | — |
+| 14 | Rapports — Export de Données | En attente | — |
+| 15 | Rapports — Piste d'Audit | En attente | — |
+| 16 | Administration — Utilisateurs | En attente | — |
+| 17 | Administration — Paramètres Système | En attente | — |
+| 18 | Administration — Appareils | En attente | — |
+| 19 | Administration — API | En attente | — |
+| 20 | Analytique — Performance | En attente | — |
+| 21 | Maintenance — Santé Système | En attente | — |
+| 22 | Maintenance — Base de Données | En attente | — |
+| 23 | Maintenance — Diagnostics | En attente | — |
+| 24 | Intégration — Tiers | En attente | — |
+
+### API Caméra — Référence rapide
+
+| Méthode | Endpoint | Description |
+|---------|----------|-------------|
+| `GET` | `/api/config/camera` | Récupère la configuration caméra actuelle |
+| `PUT` | `/api/config/camera` | Sauvegarde la configuration caméra |
+| `POST` | `/api/config/camera/test` | Teste la connexion à la source vidéo (vérification réelle via OpenCV) |

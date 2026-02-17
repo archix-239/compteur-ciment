@@ -31,6 +31,12 @@ def init_db():
     # Create default settings
     settings = [
         {"key": "camera_url", "value": "0"},
+        {"key": "camera_source_type", "value": "webcam"},
+        {"key": "camera_resolution", "value": "720p"},
+        {"key": "camera_fps", "value": "30"},
+        {"key": "camera_brightness", "value": "50"},
+        {"key": "camera_contrast", "value": "65"},
+        {"key": "camera_autofocus", "value": "true"},
         {"key": "detection_threshold", "value": "0.7"},
         {"key": "virtual_line_x", "value": "640"},
     ]

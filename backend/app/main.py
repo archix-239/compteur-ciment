@@ -212,6 +212,102 @@ async def get_quality_summary(db: Session = Depends(get_db)):
         "avgColorScore": 0.88 # Simulated average
     }
 
+# Camera Configuration Endpoints
+@app.get("/api/config/camera", response_model=schemas.CameraConfig)
+async def get_camera_config(db: Session = Depends(get_db)):
+    settings = db.query(models.SystemSetting).filter(
+        models.SystemSetting.key.in_([
+            "camera_source_type", "camera_url", "camera_resolution",
+            "camera_fps", "camera_brightness", "camera_contrast", "camera_autofocus"
+        ])
+    ).all()
+    config = {s.key: s.value for s in settings}
+    return schemas.CameraConfig(
+        source_type=config.get("camera_source_type", "webcam"),
+        url=config.get("camera_url", "0"),
+        resolution=config.get("camera_resolution", "720p"),
+        fps=int(config.get("camera_fps", "30")),
+        brightness=int(config.get("camera_brightness", "50")),
+        contrast=int(config.get("camera_contrast", "65")),
+        autofocus=config.get("camera_autofocus", "true").lower() == "true",
+    )
+
+@app.put("/api/config/camera", response_model=schemas.CameraConfig)
+async def update_camera_config(config: schemas.CameraConfig, db: Session = Depends(get_db)):
+    mapping = {
+        "camera_source_type": config.source_type,
+        "camera_url": config.url,
+        "camera_resolution": config.resolution,
+        "camera_fps": str(config.fps),
+        "camera_brightness": str(config.brightness),
+        "camera_contrast": str(config.contrast),
+        "camera_autofocus": str(config.autofocus).lower(),
+    }
+    for key, value in mapping.items():
+        setting = db.query(models.SystemSetting).filter(models.SystemSetting.key == key).first()
+        if setting:
+            setting.value = value
+        else:
+            db.add(models.SystemSetting(key=key, value=value))
+    db.commit()
+
+    # Update the vision engine with new source
+    v_engine = vision_engine.get_vision_engine()
+    if config.source_type == "ip":
+        new_source = config.url
+    elif config.source_type == "webcam":
+        new_source = 0
+    else:
+        new_source = config.url
+    if v_engine.video_source != new_source:
+        v_engine.video_source = new_source
+        # Restart capture if running
+        if v_engine.running:
+            v_engine.stop()
+            v_engine.start()
+
+    return config
+
+@app.post("/api/config/camera/test", response_model=schemas.CameraTestResult)
+async def test_camera_connection(config: schemas.CameraConfig):
+    import asyncio
+    loop = asyncio.get_event_loop()
+    result = await loop.run_in_executor(None, _test_camera_sync, config)
+    return result
+
+def _test_camera_sync(config: schemas.CameraConfig) -> dict:
+    """Test camera connection synchronously (runs in thread pool)."""
+    if config.source_type == "webcam":
+        source = int(config.url) if config.url.isdigit() else 0
+    else:
+        source = config.url
+
+    cap = None
+    try:
+        cap = cv2.VideoCapture(source)
+        if not cap.isOpened():
+            return {"success": False, "message": f"Impossible d'ouvrir la source: {source}"}
+
+        ret, frame = cap.read()
+        if not ret or frame is None:
+            return {"success": False, "message": "Source ouverte mais aucune image reçue."}
+
+        width = int(cap.get(cv2.CAP_PROP_FRAME_WIDTH))
+        height = int(cap.get(cv2.CAP_PROP_FRAME_HEIGHT))
+        fps = cap.get(cv2.CAP_PROP_FPS)
+
+        return {
+            "success": True,
+            "message": f"Connexion réussie — {width}x{height} @ {fps:.1f} FPS",
+            "resolution_detected": f"{width}x{height}",
+            "fps_detected": round(fps, 1),
+        }
+    except Exception as e:
+        return {"success": False, "message": f"Erreur: {str(e)}"}
+    finally:
+        if cap is not None:
+            cap.release()
+
 @app.websocket("/ws")
 async def websocket_endpoint(websocket: WebSocket):
     await manager.connect(websocket)

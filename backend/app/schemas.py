@@ -63,6 +63,21 @@ class SystemSetting(SystemSettingBase):
     class Config:
         from_attributes = True
 
+class CameraConfig(BaseModel):
+    source_type: str = "webcam"  # ip, webcam, file
+    url: str = "0"
+    resolution: str = "720p"  # 1080p, 720p, 480p
+    fps: int = 30
+    brightness: int = 50
+    contrast: int = 65
+    autofocus: bool = True
+
+class CameraTestResult(BaseModel):
+    success: bool
+    message: str
+    resolution_detected: Optional[str] = None
+    fps_detected: Optional[float] = None
+
 class Token(BaseModel):
     access_token: str
     token_type: str
