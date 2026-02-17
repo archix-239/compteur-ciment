@@ -28,6 +28,10 @@ class VisionEngine:
         self.confidence_threshold = 0.7
         self.line_x = 640
 
+        # Processing params
+        self.brightness = 50 # 0-100 scale (mapped to -100 to 100 or similar)
+        self.contrast = 50   # 0-100 scale (mapped to 0.5 to 3.0)
+
         self.model = None
         self.cap = None
         self.running = False
@@ -35,6 +39,7 @@ class VisionEngine:
 
         self.latest_frame = None
         self.annotated_frame = None
+        self.processed_frame = None # Raw + Software Processing (No YOLO)
         self.frame_lock = threading.Lock()
 
         self.track_history = defaultdict(list)
@@ -62,15 +67,34 @@ class VisionEngine:
     def set_on_count_callback(self, callback):
         self.on_count_callback = callback
 
-    def update_params(self, source=None, fps=None):
+    def update_params(self, source=None, fps=None, brightness=None, contrast=None):
         restart = False
-        if source is not None and source != self.video_source:
-            self.video_source = source
-            restart = True
+        with self.frame_lock:
+            if source is not None and source != self.video_source:
+                # Handle '0' or digit strings for webcams
+                if isinstance(source, str) and source.isdigit():
+                    self.video_source = int(source)
+                else:
+                    self.video_source = source
+                restart = True
+
+            if brightness is not None:
+                self.brightness = brightness
+            if contrast is not None:
+                self.contrast = contrast
 
         if restart and self.running:
             self.stop()
             self.start()
+
+    def _apply_software_processing(self, frame):
+        # Map 0-100 to useful ranges
+        # Alpha (contrast): 1.0 is no change, let's map 0-100 to 0.5-2.0
+        alpha = self.contrast / 50.0
+        # Beta (brightness): 0 is no change, let's map 0-100 to -100 to 100
+        beta = (self.brightness - 50) * 2
+
+        return cv2.convertScaleAbs(frame, alpha=alpha, beta=beta)
 
     def start(self):
         if self.running:
@@ -81,8 +105,8 @@ class VisionEngine:
         self.cap = cv2.VideoCapture(self.video_source)
 
         if not self.cap.isOpened():
-            print(f"ERREUR: Impossible d'ouvrir la source vidéo {self.video_source}")
-            return
+            print(f"ERREUR: Impossible d'ouvrir la source vidéo {self.video_source}. Tentative de démarrage du thread pour fallback.")
+            # We don't return here, we let _run_loop handle it
 
         self.running = True
         self.thread = threading.Thread(target=self._run_loop, daemon=True)
@@ -97,20 +121,38 @@ class VisionEngine:
         print("INFO: Moteur de vision arrêté.")
 
     def _run_loop(self):
+        demo_path = "backend/static/demo_conveyor.mp4"
+        is_demo = False
+
         while self.running:
             success, frame = self.cap.read()
             if not success:
-                print("AVERTISSEMENT: Flux vidéo perdu. Tentative de reconnexion...")
-                self.cap.release()
-                time.sleep(2)
-                self.cap = cv2.VideoCapture(self.video_source)
-                continue
+                if not is_demo and os.path.exists(demo_path):
+                    print(f"AVERTISSEMENT: Source {self.video_source} inaccessible. Basculement vers démo.")
+                    self.cap.release()
+                    self.cap = cv2.VideoCapture(demo_path)
+                    is_demo = True
+                    continue
+                elif is_demo:
+                    # Loop demo video
+                    self.cap.set(cv2.CAP_PROP_POS_FRAMES, 0)
+                    continue
+                else:
+                    print("AVERTISSEMENT: Flux vidéo perdu. Tentative de reconnexion...")
+                    self.cap.release()
+                    time.sleep(2)
+                    self.cap = cv2.VideoCapture(self.video_source)
+                    continue
 
             frame = cv2.resize(frame, (1280, 720))
             self.latest_frame = frame.copy()
 
+            # Apply Software Processing
+            processed_frame = self._apply_software_processing(frame)
+
+            # YOLO tracking (on original or processed? Usually on original to keep model calibration, but let's see)
             results = self.model.track(frame, persist=True, verbose=False, conf=self.confidence_threshold)
-            annotated_frame = frame.copy()
+            annotated_frame = processed_frame.copy()
 
             if results[0].boxes is not None and results[0].boxes.id is not None:
                 boxes_xyxy = results[0].boxes.xyxy.cpu()
@@ -182,12 +224,18 @@ class VisionEngine:
 
             with self.frame_lock:
                 self.annotated_frame = annotated_frame
+                self.processed_frame = processed_frame
 
-    def get_video_frame(self):
+    def get_video_frame(self, annotated=True):
         with self.frame_lock:
-            if self.annotated_frame is None:
+            if annotated:
+                frame = self.annotated_frame
+            else:
+                frame = self.processed_frame
+
+            if frame is None:
                 return None
-            return self.annotated_frame.copy()
+            return frame.copy()
 
 def get_vision_engine():
     return VisionEngine()

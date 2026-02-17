@@ -85,10 +85,16 @@ npm run dev
 - `models/` : Contient le modèle YOLO `best_V5.pt`.
 - `backend/static/captures/` : Dossier de stockage des snapshots de production.
 
+## 🧪 Fonctionnement du Fallback Caméra (Mode Test/Sandbox)
+Le système est conçu pour être testé même sans matériel physique :
+- **Webcam Locale** : Le backend tente d'ouvrir `/dev/video0`. En cas d'échec, il bascule automatiquement sur `backend/static/demo_conveyor.mp4`.
+- **Réglages Image** : La luminosité et le contraste sont gérés par un traitement logiciel OpenCV (`convertScaleAbs`), garantissant une compatibilité universelle quel que soit le type de source.
+- **Mode Raw** : L'interface de configuration affiche le flux sans annotations YOLO pour faciliter les réglages optiques.
+
 ## 📈 État d'Avancement de l'Intégration
 
 ### 1. Configuration
-- [x] Paramètres Caméra (Connecté)
+- [x] Paramètres Caméra (Connecté - Flux Réel & Fallback)
 - [ ] Templates (Mocks)
 - [ ] Configuration Modèle (Mocks)
 - [ ] Ligne Virtuelle (Mocks)

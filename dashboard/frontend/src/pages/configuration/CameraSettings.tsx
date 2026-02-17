@@ -47,6 +47,27 @@ export default function CameraSettings() {
       });
   }, []);
 
+  // Update preview settings in real-time when sliders change
+  useEffect(() => {
+    if (testStatus === 'success') {
+      const settings = {
+        source_type: sourceType,
+        url: url || (sourceType === 'webcam' ? '0' : ''),
+        resolution: resolution,
+        fps: fps,
+        brightness: brightness,
+        contrast: contrast,
+        auto_focus: autoFocus
+      };
+
+      fetch(`${API_URL}/api/vision/test_connection`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(settings)
+      }).catch(err => console.error("Error updating preview:", err));
+    }
+  }, [brightness, contrast, fps]);
+
   const handleSave = () => {
     const settings = {
       source_type: sourceType,
@@ -70,7 +91,22 @@ export default function CameraSettings() {
 
   const handleTestConnection = () => {
     setTestStatus('loading');
-    fetch(`${API_URL}/api/vision/test_connection`, { method: 'POST' })
+
+    const settings = {
+      source_type: sourceType,
+      url: url || (sourceType === 'webcam' ? '0' : ''),
+      resolution: resolution,
+      fps: fps,
+      brightness: brightness,
+      contrast: contrast,
+      auto_focus: autoFocus
+    };
+
+    fetch(`${API_URL}/api/vision/test_connection`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(settings)
+    })
       .then(res => res.json())
       .then(data => {
         setTestStatus(data.status === 'success' ? 'success' : 'error');
@@ -202,7 +238,11 @@ export default function CameraSettings() {
             </div>
 
             {testStatus === 'success' ? (
-              <img src={`${API_URL}/api/vision/video_feed`} alt="Preview" className="absolute inset-0 w-full h-full object-contain" />
+              <img
+                src={`${API_URL}/api/vision/video_feed?raw=true&t=${Date.now()}`}
+                alt="Preview"
+                className="absolute inset-0 w-full h-full object-contain"
+              />
             ) : (
               <>
                 <Camera className="w-16 h-16 text-zinc-800 mb-4" />

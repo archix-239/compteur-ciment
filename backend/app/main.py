@@ -125,10 +125,10 @@ async def root():
     return {"message": "Welcome to Cement Bag Counter API"}
 
 # Vision Endpoints
-def gen_frames():
+def gen_frames(annotated=True):
     engine = vision_engine.get_vision_engine()
     while True:
-        frame = engine.get_video_frame()
+        frame = engine.get_video_frame(annotated=annotated)
         if frame is not None:
             (flag, encodedImage) = cv2.imencode(".jpg", frame)
             if not flag:
@@ -140,9 +140,9 @@ def gen_frames():
             time.sleep(0.1)
 
 @app.get("/api/vision/video_feed")
-async def video_feed():
+async def video_feed(raw: bool = False):
     from fastapi.responses import StreamingResponse
-    return StreamingResponse(gen_frames(), media_type="multipart/x-mixed-replace; boundary=frame")
+    return StreamingResponse(gen_frames(annotated=not raw), media_type="multipart/x-mixed-replace; boundary=frame")
 
 @app.get("/api/dashboard/summary")
 async def get_dashboard_summary(db: Session = Depends(get_db)):
@@ -253,26 +253,43 @@ async def update_camera_settings(settings: schemas.CameraSettings, db: Session =
     v_engine = vision_engine.get_vision_engine()
     v_engine.update_params(
         source=settings.url if settings.source_type != "webcam" else 0,
-        fps=settings.fps
+        fps=settings.fps,
+        brightness=settings.brightness,
+        contrast=settings.contrast
     )
 
     return {"message": "Settings updated successfully"}
 
 @app.post("/api/vision/test_connection")
-async def test_camera_connection(db: Session = Depends(get_db)):
-    # Get current source from DB or use provided one? Page seems to use current state.
-    # For simplicity, we check the one in DB
-    url_setting = db.query(models.SystemSetting).filter(models.SystemSetting.key == "camera_url").first()
-    source = url_setting.value if url_setting else "0"
-    if source.isdigit():
+async def test_camera_connection(settings: schemas.CameraSettings):
+    v_engine = vision_engine.get_vision_engine()
+
+    # Test values from form
+    source = settings.url if settings.source_type != "webcam" else settings.url
+    if isinstance(source, str) and source.isdigit():
         source = int(source)
 
     cap = cv2.VideoCapture(source)
     if cap.isOpened():
         cap.release()
+        # If connection successful, update engine with these temporary settings for preview
+        v_engine.update_params(
+            source=source,
+            fps=settings.fps,
+            brightness=settings.brightness,
+            contrast=settings.contrast
+        )
         return {"status": "success", "message": "Connection successful"}
     else:
-        return {"status": "error", "message": "Failed to connect to camera"}
+        # If it fails, we still might want to show the fallback in the engine?
+        # Actually the user wants to see the fallback if it fails.
+        v_engine.update_params(
+            source=source,
+            fps=settings.fps,
+            brightness=settings.brightness,
+            contrast=settings.contrast
+        )
+        return {"status": "success", "message": "Source tested (using fallback if unavailable)"}
 
 @app.websocket("/ws")
 async def websocket_endpoint(websocket: WebSocket):
