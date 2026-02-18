@@ -124,27 +124,22 @@ class VisionEngine:
 
         print(f"INFO: Démarrage du moteur de vision (Source: {self.video_source}, Platform: {sys.platform})...")
 
-        try:
-            self.model = YOLO(self.model_path)
-        except Exception as e:
-            print(f"ERREUR: Impossible de charger le modèle YOLO: {e}")
-            return
+        if self.model is None:
+            try:
+                print("INFO: Chargement du modèle YOLO...")
+                self.model = YOLO(self.model_path)
+                print("INFO: Modèle YOLO chargé avec succès.")
+            except Exception as e:
+                print(f"ERREUR: Impossible de charger le modèle YOLO: {e}")
+                return
+        else:
+            print("INFO: Modèle YOLO déjà en mémoire, skip du rechargement.")
 
-        self.cap = self._open_capture()
-
-        if not self.cap.isOpened():
-            print(f"ERREUR: Impossible d'ouvrir la source vidéo {self.video_source}")
-            return
-
-        # Verify we can actually read a frame before starting the loop
-        ret, test_frame = self.cap.read()
-        if not ret or test_frame is None:
-            print(f"ERREUR: Source ouverte mais impossible de lire une frame (source: {self.video_source})")
-            self.cap.release()
-            self.cap = None
-            return
-
-        print(f"INFO: Source vidéo OK — première frame lue ({test_frame.shape[1]}x{test_frame.shape[0]})")
+        # NOTE: Capture is opened inside _run_loop (not here) because
+        # DirectShow on Windows uses COM objects that are bound to the
+        # thread apartment that created them. Opening capture on the main
+        # thread and reading on a worker thread causes silent failures.
+        self.cap = None
 
         self._stop_event.clear()
         self.running = True
@@ -208,6 +203,17 @@ class VisionEngine:
         max_reconnect_delay = 30  # seconds
         frames_read = 0
 
+        # Open capture on THIS thread (critical for DirectShow/COM on Windows)
+        self.cap = self._open_capture()
+        if self.cap and self.cap.isOpened():
+            ret, test_frame = self.cap.read()
+            if ret and test_frame is not None:
+                print(f"INFO: Source vidéo OK — première frame lue ({test_frame.shape[1]}x{test_frame.shape[0]})")
+            else:
+                print(f"ERREUR: Source ouverte mais impossible de lire une frame (source: {self.video_source})")
+                self.cap.release()
+                self.cap = None
+
         while self.running and not self._stop_event.is_set():
             if self.cap is None or not self.cap.isOpened():
                 reconnect_delay = min(2 ** reconnect_attempts, max_reconnect_delay)
@@ -250,6 +256,18 @@ class VisionEngine:
 
             frame = cv2.resize(frame, (1280, 720))
             self.latest_frame = frame.copy()
+
+            # Broadcast raw frame immediately (before YOLO) for instant feedback
+            # This ensures the user sees video while YOLO warms up
+            now = time.monotonic()
+            if now - last_broadcast >= frame_interval:
+                preview = frame.copy()
+                cv2.line(preview, (self.line_x, 0), (self.line_x, preview.shape[0]), (0, 255, 255), 2)
+                self._broadcast_frame(preview)
+                last_broadcast = now
+                if frames_read <= 3:
+                    sub_count = len(self.video_subscribers)
+                    print(f"INFO: Broadcast frame #{frames_read} envoyée ({sub_count} subscriber(s))")
 
             results = self.model.track(frame, persist=True, verbose=False, conf=self.confidence_threshold)
             annotated_frame = frame.copy()
@@ -330,11 +348,12 @@ class VisionEngine:
             with self.frame_lock:
                 self.annotated_frame = annotated_frame
 
-            # Broadcast to WebSocket subscribers at target FPS
-            now = time.monotonic()
-            if now - last_broadcast >= frame_interval:
+            # Broadcast annotated frame (post-YOLO) if enough time has passed
+            # since the pre-YOLO broadcast above
+            now_post = time.monotonic()
+            if now_post - last_broadcast >= frame_interval:
                 self._broadcast_frame(annotated_frame)
-                last_broadcast = now
+                last_broadcast = now_post
 
     def get_video_frame(self):
         with self.frame_lock:
