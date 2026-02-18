@@ -44,6 +44,19 @@ class DetectionLog(DetectionLogBase):
     class Config:
         from_attributes = True
 
+
+class SessionListResponse(BaseModel):
+    items: List[Session]
+    total: int
+    active_session_id: Optional[str] = None
+
+
+class DetectionLogListResponse(BaseModel):
+    items: List[DetectionLog]
+    total: int
+    page: int
+    page_size: int
+
 class AlertRuleBase(BaseModel):
     name: str
     type: str

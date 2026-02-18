@@ -98,8 +98,8 @@ Suivi de l'intégration réelle (remplacement des données fictives par des appe
 | 3 | **Configuration — Ligne Virtuelle** | Fait | GET/PUT `/api/config/virtual-line` connecté. Position, largeur et direction persistées et appliquées en temps réel à la logique de franchissement de ligne. |
 | 4 | Configuration — Templates | En attente | — |
 | 5 | **Monitoring — Flux en Direct** | Fait | Streaming vidéo via WebSocket `/ws/video` (base64 JPEG). Hook `useVideoStream` réutilisable. FPS en temps réel. Reconnexion automatique. Support RTSP/HTTP/Webcam. |
-| 6 | Production — Gestion des Sessions | En attente | — |
-| 7 | Production — Journal de Production | En attente | — |
+| 6 | **Production — Gestion des Sessions** | Fait | Sessions réelles connectées via API: démarrage/arrêt, session active, stats live et historique paginé (`GET /sessions/`, `POST /sessions/start`, `POST /sessions/stop/{id}`). |
+| 7 | **Production — Journal de Production** | Fait | Tableau branché sur `GET /api/logs/` avec pagination backend + filtres (statut, recherche identifiant), miniatures et ouverture capture. |
 | 8 | Production — Timeline | En attente | — |
 | 9 | Qualité — Tableau de Bord | En attente | — |
 | 10 | Qualité — Vérification Manuelle | En attente | — |
@@ -129,6 +129,11 @@ Suivi de l'intégration réelle (remplacement des données fictives par des appe
 | `PUT` | `/api/config/model` | Sauvegarde et applique à chaud la configuration IA |
 | `GET` | `/api/config/virtual-line` | Récupère la configuration de la ligne virtuelle |
 | `PUT` | `/api/config/virtual-line` | Sauvegarde et applique la ligne virtuelle (position, largeur, direction) |
+| `GET` | `/sessions/` | Liste paginée des sessions + session active courante |
+| `GET` | `/sessions/active` | Retourne la session active (ou `null`) |
+| `POST` | `/sessions/start` | Démarre une session de production (idempotent si déjà active) |
+| `POST` | `/sessions/stop/{session_id}` | Arrête une session active |
+| `GET` | `/api/logs/` | Journal de production paginé (filtres `status`, `search`, `session_id`) |
 | `WS` | `/ws/video` | Stream vidéo temps réel (frames JPEG en base64 via WebSocket) |
 | `WS` | `/ws` | Événements temps réel (COUNT_EVENT, etc.) |
 | `GET` | `/api/vision/video_feed` | Stream MJPEG (fallback, conservé pour compatibilité) |

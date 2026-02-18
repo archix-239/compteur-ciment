@@ -260,10 +260,35 @@ async def get_dashboard_summary(db: Session = Depends(get_db)):
 
 
 # ─── Logs ─────────────────────────────────────────────────────────────────────
-@app.get("/api/logs/", response_model=List[schemas.DetectionLog])
-async def get_logs(skip: int = 0, limit: int = 100, db: Session = Depends(get_db)):
-    logs = db.query(models.DetectionLog).order_by(models.DetectionLog.timestamp.desc()).offset(skip).limit(limit).all()
-    return logs
+@app.get("/api/logs/", response_model=schemas.DetectionLogListResponse)
+async def get_logs(
+    page: int = 1,
+    page_size: int = 20,
+    status: str | None = None,
+    session_id: str | None = None,
+    search: str | None = None,
+    db: Session = Depends(get_db),
+):
+    page = max(page, 1)
+    page_size = min(max(page_size, 1), 100)
+
+    query = db.query(models.DetectionLog)
+    if status:
+        mapped_status = "conforme" if status.lower() in ["verifie", "vérifié", "conforme"] else "rejete" if status.lower() in ["rejete", "rejeté"] else status
+        query = query.filter(models.DetectionLog.status == mapped_status)
+    if session_id:
+        query = query.filter(models.DetectionLog.session_id == session_id)
+    if search:
+        query = query.filter(models.DetectionLog.identifier.ilike(f"%{search}%"))
+
+    total = query.count()
+    logs = query.order_by(models.DetectionLog.timestamp.desc()).offset((page - 1) * page_size).limit(page_size).all()
+    return {
+        "items": logs,
+        "total": total,
+        "page": page,
+        "page_size": page_size,
+    }
 
 
 # ─── Users ────────────────────────────────────────────────────────────────────
@@ -569,16 +594,43 @@ async def read_users_me(current_user: models.User = Depends(auth.get_current_use
 
 
 # ─── Sessions ─────────────────────────────────────────────────────────────────
-@app.get("/sessions/", response_model=list[schemas.Session])
-async def read_sessions(skip: int = 0, limit: int = 100, db: Session = Depends(get_db)):
-    sessions = db.query(models.Session).offset(skip).limit(limit).all()
-    return sessions
+@app.get("/sessions/active", response_model=schemas.Session | None)
+async def read_active_session(db: Session = Depends(get_db)):
+    return db.query(models.Session).filter(models.Session.status == "active").order_by(models.Session.start_time.desc()).first()
+
+
+@app.get("/sessions/", response_model=schemas.SessionListResponse)
+async def read_sessions(
+    page: int = 1,
+    page_size: int = 20,
+    status: str | None = None,
+    db: Session = Depends(get_db),
+):
+    page = max(page, 1)
+    page_size = min(max(page_size, 1), 100)
+
+    query = db.query(models.Session)
+    if status:
+        query = query.filter(models.Session.status == status)
+
+    total = query.count()
+    items = query.order_by(models.Session.start_time.desc()).offset((page - 1) * page_size).limit(page_size).all()
+    active = db.query(models.Session).filter(models.Session.status == "active").first()
+    return {
+        "items": items,
+        "total": total,
+        "active_session_id": active.id if active else None,
+    }
 
 
 @app.post("/sessions/start", response_model=schemas.Session)
 async def start_session(db: Session = Depends(get_db)):
     import datetime
-    session_id = f"S-{datetime.datetime.now().strftime('%Y%m%d-%H%M')}"
+    active = db.query(models.Session).filter(models.Session.status == "active").first()
+    if active:
+        return active
+
+    session_id = f"S-{datetime.datetime.now().strftime('%Y%m%d-%H%M%S')}"
     db_session = models.Session(id=session_id)
     db.add(db_session)
     db.commit()
@@ -596,6 +648,9 @@ async def stop_session(session_id: str, db: Session = Depends(get_db)):
     db_session = db.query(models.Session).filter(models.Session.id == session_id).first()
     if not db_session:
         raise HTTPException(status_code=404, detail="Session not found")
+    if db_session.status != "active":
+        return db_session
+
     db_session.end_time = datetime.datetime.utcnow()
     db_session.status = "completed"
     db.commit()
