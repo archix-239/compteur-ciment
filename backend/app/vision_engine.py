@@ -64,8 +64,14 @@ class VisionEngine:
         self.video_subscribers_lock = threading.Lock()
 
         # Streaming settings
-        self.jpeg_quality = 70
+        self.jpeg_quality = 65
         self.target_fps = 15  # Target FPS for WebSocket streaming (lower than capture FPS)
+
+        # Latency controls
+        self.low_latency_mode = True
+        self.max_grab_skip = 3
+        self.last_annotated_frame = None
+        self.inference_every_n_frames = 2
 
         # Ensure capture directory exists
         os.makedirs("backend/static/captures", exist_ok=True)
@@ -102,7 +108,10 @@ class VisionEngine:
 
         if isinstance(source, str) and source.startswith("rtsp://"):
             # RTSP: use FFMPEG backend with TCP transport for reliability
-            os.environ["OPENCV_FFMPEG_CAPTURE_OPTIONS"] = "rtsp_transport;tcp|analyzeduration;5000000|probesize;5000000"
+            os.environ["OPENCV_FFMPEG_CAPTURE_OPTIONS"] = (
+                "rtsp_transport;tcp|fflags;nobuffer|flags;low_delay|"
+                "max_delay;0|analyzeduration;0|probesize;32768"
+            )
             cap = cv2.VideoCapture(source, cv2.CAP_FFMPEG)
         elif isinstance(source, str) and (source.startswith("http://") or source.startswith("https://")):
             # HTTP/ONVIF stream
@@ -121,6 +130,8 @@ class VisionEngine:
         if cap.isOpened():
             # Reduce internal buffer to minimize latency
             cap.set(cv2.CAP_PROP_BUFFERSIZE, 1)
+            # Best effort low-latency hints (backend-dependent)
+            cap.set(cv2.CAP_PROP_FPS, 30)
         else:
             print(f"ERREUR: _open_capture a échoué pour la source: {source}")
 
@@ -266,6 +277,7 @@ class VisionEngine:
         reconnect_attempts = 0
         max_reconnect_delay = 30  # seconds
         frames_read = 0
+        frames_for_inference = 0
 
         # Open capture on THIS thread (critical for DirectShow/COM on Windows)
         self.cap = self._open_capture()
@@ -309,6 +321,17 @@ class VisionEngine:
                 reconnect_attempts += 1
                 continue
 
+            if self.low_latency_mode and not self._is_webcam_index(self.video_source):
+                # For IP/file sources, drop buffered frames to stay close to real-time
+                for _ in range(self.max_grab_skip):
+                    grabbed = self.cap.grab()
+                    if not grabbed:
+                        break
+                    ok, newer = self.cap.retrieve()
+                    if not ok or newer is None:
+                        break
+                    frame = newer
+
             # Reset reconnect counter on successful read
             reconnect_attempts = 0
             frames_read += 1
@@ -342,88 +365,98 @@ class VisionEngine:
                     sub_count = len(self.video_subscribers)
                     print(f"INFO: Broadcast frame #{frames_read} envoyée ({sub_count} subscriber(s))")
 
-            results = self.model.track(
-                frame,
-                persist=self.tracking_persistence,
-                verbose=False,
-                conf=self.confidence_threshold,
-                iou=self.nms_iou_threshold,
-                max_det=self.max_detections,
-                imgsz=self.inference_size,
-            )
-            annotated_frame = frame.copy()
+            frames_for_inference += 1
+            run_inference = (frames_for_inference % self.inference_every_n_frames) == 0
 
-            if results[0].boxes is not None and results[0].boxes.id is not None:
-                boxes_xyxy = results[0].boxes.xyxy.cpu()
-                track_ids = results[0].boxes.id.int().cpu().tolist()
+            if run_inference:
+                results = self.model.track(
+                    frame,
+                    persist=self.tracking_persistence,
+                    verbose=False,
+                    conf=self.confidence_threshold,
+                    iou=self.nms_iou_threshold,
+                    max_det=self.max_detections,
+                    imgsz=self.inference_size,
+                )
+                annotated_frame = frame.copy()
 
-                for box_xyxy, track_id in zip(boxes_xyxy, track_ids):
-                    x1, y1, x2, y2 = map(int, box_xyxy)
-                    roi_bgr = frame[y1:y2, x1:x2]
-                    if roi_bgr.size == 0:
-                        continue
+                if results[0].boxes is not None and results[0].boxes.id is not None:
+                    boxes_xyxy = results[0].boxes.xyxy.cpu()
+                    track_ids = results[0].boxes.id.int().cpu().tolist()
 
-                    if self.object_data[track_id]["qr_uuid"] is None:
-                        decoded_qrs = qr_decode(roi_bgr)
-                        if decoded_qrs:
-                            qr_data = decoded_qrs[0].data.decode('utf-8')
-                            self.object_data[track_id]["qr_uuid"] = qr_data
+                    for box_xyxy, track_id in zip(boxes_xyxy, track_ids):
+                        x1, y1, x2, y2 = map(int, box_xyxy)
+                        roi_bgr = frame[y1:y2, x1:x2]
+                        if roi_bgr.size == 0:
+                            continue
 
-                    current_uuid = self.object_data[track_id]["qr_uuid"]
-                    is_conforme = current_uuid is not None
+                        if self.object_data[track_id]["qr_uuid"] is None:
+                            decoded_qrs = qr_decode(roi_bgr)
+                            if decoded_qrs:
+                                qr_data = decoded_qrs[0].data.decode('utf-8')
+                                self.object_data[track_id]["qr_uuid"] = qr_data
 
-                    bag_status = "conforme" if is_conforme else "rejeté"
-                    box_color = (0, 255, 0) if is_conforme else (0, 0, 255)
+                        current_uuid = self.object_data[track_id]["qr_uuid"]
+                        is_conforme = current_uuid is not None
 
-                    already_counted = (is_conforme and current_uuid in self.counted_conforme_uuids) or \
-                                      (not is_conforme and track_id in self.counted_rejete_ids)
+                        bag_status = "conforme" if is_conforme else "rejeté"
+                        box_color = (0, 255, 0) if is_conforme else (0, 0, 255)
 
-                    if already_counted:
-                        bag_status = "compté"
-                        box_color = (255, 0, 0)
+                        already_counted = (is_conforme and current_uuid in self.counted_conforme_uuids) or \
+                                          (not is_conforme and track_id in self.counted_rejete_ids)
 
-                    cv2.rectangle(annotated_frame, (x1, y1), (x2, y2), box_color, 2)
-                    label = f"ID:{track_id} - {bag_status.upper()}"
-                    cv2.putText(annotated_frame, label, (x1, y1 - 10), cv2.FONT_HERSHEY_SIMPLEX, 0.5, box_color, 2)
+                        if already_counted:
+                            bag_status = "compté"
+                            box_color = (255, 0, 0)
 
-                    center_x = (x1 + x2) // 2
-                    center_y = (y1 + y2) // 2
-                    track = self.track_history[track_id]
-                    track.append({"x": center_x, "y": center_y})
-                    if len(track) > 2:
-                        track.pop(0)
+                        cv2.rectangle(annotated_frame, (x1, y1), (x2, y2), box_color, 2)
+                        label = f"ID:{track_id} - {bag_status.upper()}"
+                        cv2.putText(annotated_frame, label, (x1, y1 - 10), cv2.FONT_HERSHEY_SIMPLEX, 0.5, box_color, 2)
 
-                    if self.active_session_id and not already_counted and len(track) == 2 and self._crossed_virtual_line(track):
-                        detection_score = float(results[0].boxes.conf[track_ids.index(track_id)])
+                        center_x = (x1 + x2) // 2
+                        center_y = (y1 + y2) // 2
+                        track = self.track_history[track_id]
+                        track.append({"x": center_x, "y": center_y})
+                        if len(track) > 2:
+                            track.pop(0)
 
-                        # Save capture
-                        timestamp_str = datetime.now().strftime('%Y%m%d_%H%M%S_%f')
-                        filename = f"capture_{timestamp_str}.jpg"
-                        filepath = os.path.join("backend/static/captures", filename)
-                        cv2.imwrite(filepath, roi_bgr)
+                        if self.active_session_id and not already_counted and len(track) == 2 and self._crossed_virtual_line(track):
+                            detection_score = float(results[0].boxes.conf[track_ids.index(track_id)])
 
-                        event_data = {
-                            "session_id": self.active_session_id,
-                            "status": "conforme" if is_conforme else "rejete",
-                            "identifier": current_uuid if is_conforme else f"track_id_{track_id}",
-                            "timestamp": datetime.utcnow(),
-                            "detection_score": detection_score,
-                            "capture_url": f"/static/captures/{filename}",
-                            "logo_score": 0.9 + (np.random.random() * 0.09),
-                            "color_score": 0.85 + (np.random.random() * 0.1),
-                            "interval": 2.5
-                        }
+                            # Save capture
+                            timestamp_str = datetime.now().strftime('%Y%m%d_%H%M%S_%f')
+                            filename = f"capture_{timestamp_str}.jpg"
+                            filepath = os.path.join("backend/static/captures", filename)
+                            cv2.imwrite(filepath, roi_bgr)
 
-                        if is_conforme:
-                            self.counted_conforme_uuids.add(current_uuid)
-                        else:
-                            self.counted_rejete_ids.add(track_id)
+                            event_data = {
+                                "session_id": self.active_session_id,
+                                "status": "conforme" if is_conforme else "rejete",
+                                "identifier": current_uuid if is_conforme else f"track_id_{track_id}",
+                                "timestamp": datetime.utcnow(),
+                                "detection_score": detection_score,
+                                "capture_url": f"/static/captures/{filename}",
+                                "logo_score": 0.9 + (np.random.random() * 0.09),
+                                "color_score": 0.85 + (np.random.random() * 0.1),
+                                "interval": 2.5
+                            }
 
-                        if self.on_count_callback:
-                            try:
-                                self.on_count_callback(event_data)
-                            except Exception as e:
-                                print(f"ERREUR callback comptage: {e}")
+                            if is_conforme:
+                                self.counted_conforme_uuids.add(current_uuid)
+                            else:
+                                self.counted_rejete_ids.add(track_id)
+
+                            if self.on_count_callback:
+                                try:
+                                    self.on_count_callback(event_data)
+                                except Exception as e:
+                                    print(f"ERREUR callback comptage: {e}")
+
+            else:
+                if self.last_annotated_frame is not None:
+                    annotated_frame = self.last_annotated_frame.copy()
+                else:
+                    annotated_frame = frame.copy()
 
             line_y = int((self.line_y_percent / 100.0) * annotated_frame.shape[0])
             span_half = int((self.line_span_percent / 100.0) * annotated_frame.shape[1] / 2)
@@ -438,6 +471,7 @@ class VisionEngine:
 
             with self.frame_lock:
                 self.annotated_frame = annotated_frame
+                self.last_annotated_frame = annotated_frame
 
             # Broadcast annotated frame (post-YOLO) if enough time has passed
             # since the pre-YOLO broadcast above
