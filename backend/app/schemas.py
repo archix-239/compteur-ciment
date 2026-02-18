@@ -78,6 +78,21 @@ class CameraTestResult(BaseModel):
     resolution_detected: Optional[str] = None
     fps_detected: Optional[float] = None
 
+
+class ModelConfig(BaseModel):
+    selected_model: str = "models/best_V5.pt"
+    confidence_threshold: float = 0.7
+    nms_iou_threshold: float = 0.45
+    max_detections: int = 100
+    inference_size: int = 1280
+    tracking_persistence: bool = True
+
+
+class VirtualLineConfig(BaseModel):
+    position_percent: int = 60
+    line_span_percent: int = 80
+    direction: str = "left-right"
+
 class Token(BaseModel):
     access_token: str
     token_type: str

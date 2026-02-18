@@ -30,7 +30,15 @@ class VisionEngine:
         self.model_path = 'models/best_V5.pt'
         self.video_source = 0  # Default to 0, can be updated from settings
         self.confidence_threshold = 0.7
+        self.nms_iou_threshold = 0.45
+        self.max_detections = 100
+        self.inference_size = 1280
+        self.tracking_persistence = True
+
         self.line_x = 640
+        self.line_y_percent = 60
+        self.line_span_percent = 80
+        self.counting_direction = "left-right"
 
         self.model = None
         self.cap = None
@@ -117,6 +125,62 @@ class VisionEngine:
             print(f"ERREUR: _open_capture a échoué pour la source: {source}")
 
         return cap
+
+
+    def apply_model_config(
+        self,
+        model_path=None,
+        confidence_threshold=None,
+        nms_iou_threshold=None,
+        max_detections=None,
+        inference_size=None,
+        tracking_persistence=None,
+    ):
+        if confidence_threshold is not None:
+            self.confidence_threshold = float(confidence_threshold)
+        if nms_iou_threshold is not None:
+            self.nms_iou_threshold = float(nms_iou_threshold)
+        if max_detections is not None:
+            self.max_detections = int(max_detections)
+        if inference_size is not None:
+            self.inference_size = int(inference_size)
+        if tracking_persistence is not None:
+            self.tracking_persistence = bool(tracking_persistence)
+
+        if model_path and model_path != self.model_path:
+            self.model_path = model_path
+            try:
+                print(f"INFO: Rechargement du modèle YOLO depuis {self.model_path}")
+                self.model = YOLO(self.model_path)
+            except Exception as e:
+                print(f"ERREUR: Rechargement modèle échoué: {e}")
+
+    def apply_virtual_line_config(self, position_percent=None, line_span_percent=None, direction=None):
+        if position_percent is not None:
+            self.line_y_percent = int(position_percent)
+        if line_span_percent is not None:
+            self.line_span_percent = int(line_span_percent)
+        if direction is not None:
+            self.counting_direction = direction
+
+    def _crossed_virtual_line(self, track):
+        if len(track) < 2:
+            return False
+
+        prev = track[0]
+        curr = track[1]
+
+        if self.counting_direction == "left-right":
+            return prev["x"] < self.line_x and curr["x"] >= self.line_x
+        if self.counting_direction == "right-left":
+            return prev["x"] > self.line_x and curr["x"] <= self.line_x
+        if self.counting_direction == "top-down":
+            line_y = int((self.line_y_percent / 100.0) * 720)
+            return prev["y"] < line_y and curr["y"] >= line_y
+        if self.counting_direction == "bottom-up":
+            line_y = int((self.line_y_percent / 100.0) * 720)
+            return prev["y"] > line_y and curr["y"] <= line_y
+        return prev["x"] < self.line_x and curr["x"] >= self.line_x
 
     def start(self):
         if self.running:
@@ -262,14 +326,31 @@ class VisionEngine:
             now = time.monotonic()
             if now - last_broadcast >= frame_interval:
                 preview = frame.copy()
-                cv2.line(preview, (self.line_x, 0), (self.line_x, preview.shape[0]), (0, 255, 255), 2)
+                line_y = int((self.line_y_percent / 100.0) * preview.shape[0])
+                span_half = int((self.line_span_percent / 100.0) * preview.shape[1] / 2)
+                center_x = preview.shape[1] // 2
+                x_start = max(0, center_x - span_half)
+                x_end = min(preview.shape[1], center_x + span_half)
+
+                if self.counting_direction in ("left-right", "right-left"):
+                    cv2.line(preview, (self.line_x, 0), (self.line_x, preview.shape[0]), (0, 255, 255), 2)
+                else:
+                    cv2.line(preview, (x_start, line_y), (x_end, line_y), (0, 255, 255), 2)
                 self._broadcast_frame(preview)
                 last_broadcast = now
                 if frames_read <= 3:
                     sub_count = len(self.video_subscribers)
                     print(f"INFO: Broadcast frame #{frames_read} envoyée ({sub_count} subscriber(s))")
 
-            results = self.model.track(frame, persist=True, verbose=False, conf=self.confidence_threshold)
+            results = self.model.track(
+                frame,
+                persist=self.tracking_persistence,
+                verbose=False,
+                conf=self.confidence_threshold,
+                iou=self.nms_iou_threshold,
+                max_det=self.max_detections,
+                imgsz=self.inference_size,
+            )
             annotated_frame = frame.copy()
 
             if results[0].boxes is not None and results[0].boxes.id is not None:
@@ -306,12 +387,13 @@ class VisionEngine:
                     cv2.putText(annotated_frame, label, (x1, y1 - 10), cv2.FONT_HERSHEY_SIMPLEX, 0.5, box_color, 2)
 
                     center_x = (x1 + x2) // 2
+                    center_y = (y1 + y2) // 2
                     track = self.track_history[track_id]
-                    track.append(center_x)
+                    track.append({"x": center_x, "y": center_y})
                     if len(track) > 2:
                         track.pop(0)
 
-                    if self.active_session_id and not already_counted and len(track) == 2 and track[0] < self.line_x and track[1] >= self.line_x:
+                    if self.active_session_id and not already_counted and len(track) == 2 and self._crossed_virtual_line(track):
                         detection_score = float(results[0].boxes.conf[track_ids.index(track_id)])
 
                         # Save capture
@@ -343,7 +425,16 @@ class VisionEngine:
                             except Exception as e:
                                 print(f"ERREUR callback comptage: {e}")
 
-            cv2.line(annotated_frame, (self.line_x, 0), (self.line_x, annotated_frame.shape[0]), (0, 255, 255), 2)
+            line_y = int((self.line_y_percent / 100.0) * annotated_frame.shape[0])
+            span_half = int((self.line_span_percent / 100.0) * annotated_frame.shape[1] / 2)
+            center_x = annotated_frame.shape[1] // 2
+            x_start = max(0, center_x - span_half)
+            x_end = min(annotated_frame.shape[1], center_x + span_half)
+
+            if self.counting_direction in ("left-right", "right-left"):
+                cv2.line(annotated_frame, (self.line_x, 0), (self.line_x, annotated_frame.shape[0]), (0, 255, 255), 2)
+            else:
+                cv2.line(annotated_frame, (x_start, line_y), (x_end, line_y), (0, 255, 255), 2)
 
             with self.frame_lock:
                 self.annotated_frame = annotated_frame

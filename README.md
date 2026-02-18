@@ -94,8 +94,8 @@ Suivi de l'intégration réelle (remplacement des données fictives par des appe
 | # | Interface | Statut | Détails |
 |---|-----------|--------|---------|
 | 1 | **Configuration — Paramètres Caméra** | Fait | GET/PUT `/api/config/camera`, POST `/api/config/camera/test` (test réel OpenCV). Formulaire connecté, sauvegarde en BDD, test de connexion caméra fonctionnel. Preview WebSocket vidéo. |
-| 2 | Configuration — Modèle IA | En attente | — |
-| 3 | Configuration — Ligne Virtuelle | En attente | — |
+| 2 | **Configuration — Modèle IA** | Fait | GET/PUT `/api/config/model` connecté au frontend. Paramètres (modèle, seuil confiance, NMS, max det, imgsz, tracking persist) persistés en BDD et appliqués à chaud au moteur vision. |
+| 3 | **Configuration — Ligne Virtuelle** | Fait | GET/PUT `/api/config/virtual-line` connecté. Position, largeur et direction persistées et appliquées en temps réel à la logique de franchissement de ligne. |
 | 4 | Configuration — Templates | En attente | — |
 | 5 | **Monitoring — Flux en Direct** | Fait | Streaming vidéo via WebSocket `/ws/video` (base64 JPEG). Hook `useVideoStream` réutilisable. FPS en temps réel. Reconnexion automatique. Support RTSP/HTTP/Webcam. |
 | 6 | Production — Gestion des Sessions | En attente | — |
@@ -125,6 +125,10 @@ Suivi de l'intégration réelle (remplacement des données fictives par des appe
 | `GET` | `/api/config/camera` | Récupère la configuration caméra actuelle |
 | `PUT` | `/api/config/camera` | Sauvegarde la configuration caméra |
 | `POST` | `/api/config/camera/test` | Teste la connexion à la source vidéo (vérification réelle via OpenCV) |
+| `GET` | `/api/config/model` | Récupère la configuration IA active (modèle + seuils inférence) |
+| `PUT` | `/api/config/model` | Sauvegarde et applique à chaud la configuration IA |
+| `GET` | `/api/config/virtual-line` | Récupère la configuration de la ligne virtuelle |
+| `PUT` | `/api/config/virtual-line` | Sauvegarde et applique la ligne virtuelle (position, largeur, direction) |
 | `WS` | `/ws/video` | Stream vidéo temps réel (frames JPEG en base64 via WebSocket) |
 | `WS` | `/ws` | Événements temps réel (COUNT_EVENT, etc.) |
 | `GET` | `/api/vision/video_feed` | Stream MJPEG (fallback, conservé pour compatibilité) |

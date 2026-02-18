@@ -37,8 +37,16 @@ def init_db():
         {"key": "camera_brightness", "value": "50"},
         {"key": "camera_contrast", "value": "65"},
         {"key": "camera_autofocus", "value": "true"},
+        {"key": "detection_model_path", "value": "models/best_V5.pt"},
         {"key": "detection_threshold", "value": "0.7"},
+        {"key": "detection_nms_iou", "value": "0.45"},
+        {"key": "detection_max_det", "value": "100"},
+        {"key": "detection_imgsz", "value": "1280"},
+        {"key": "tracking_persistence", "value": "true"},
         {"key": "virtual_line_x", "value": "640"},
+        {"key": "virtual_line_y_percent", "value": "60"},
+        {"key": "virtual_line_span_percent", "value": "80"},
+        {"key": "virtual_line_direction", "value": "left-right"},
     ]
     for s in settings:
         setting = db.query(models.SystemSetting).filter(models.SystemSetting.key == s["key"]).first()

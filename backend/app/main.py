@@ -112,7 +112,11 @@ async def lifespan(app: FastAPI):
     db = SessionLocal()
     try:
         settings = db.query(models.SystemSetting).filter(
-            models.SystemSetting.key.in_(["camera_source_type", "camera_url"])
+            models.SystemSetting.key.in_([
+                "camera_source_type", "camera_url",
+                "detection_model_path", "detection_threshold", "detection_nms_iou", "detection_max_det", "detection_imgsz", "tracking_persistence",
+                "virtual_line_x", "virtual_line_y_percent", "virtual_line_span_percent", "virtual_line_direction"
+            ])
         ).all()
         config = {s.key: s.value for s in settings}
         source_type = config.get("camera_source_type", "webcam")
@@ -123,6 +127,22 @@ async def lifespan(app: FastAPI):
             v_engine.video_source = int(url) if url.isdigit() else 0
         else:
             v_engine.video_source = url
+
+        v_engine.apply_model_config(
+            model_path=config.get("detection_model_path", "models/best_V5.pt"),
+            confidence_threshold=float(config.get("detection_threshold", "0.7")),
+            nms_iou_threshold=float(config.get("detection_nms_iou", "0.45")),
+            max_detections=int(config.get("detection_max_det", "100")),
+            inference_size=int(config.get("detection_imgsz", "1280")),
+            tracking_persistence=config.get("tracking_persistence", "true").lower() == "true",
+        )
+        v_engine.apply_virtual_line_config(
+            position_percent=int(config.get("virtual_line_y_percent", "60")),
+            line_span_percent=int(config.get("virtual_line_span_percent", "80")),
+            direction=config.get("virtual_line_direction", "left-right"),
+        )
+        if "virtual_line_x" in config:
+            v_engine.line_x = int(config.get("virtual_line_x", "640"))
 
         v_engine.set_on_count_callback(handle_vision_event)
         v_engine.start()
@@ -432,6 +452,98 @@ def _test_camera_sync(config: schemas.CameraConfig) -> dict:
         if engine_was_running:
             print("INFO: Redémarrage du moteur de vision après test caméra")
             v_engine.start()
+
+
+# ─── IA Model Configuration ──────────────────────────────────────────────────
+@app.get("/api/config/model", response_model=schemas.ModelConfig)
+async def get_model_config(db: Session = Depends(get_db)):
+    settings = db.query(models.SystemSetting).filter(
+        models.SystemSetting.key.in_([
+            "detection_model_path", "detection_threshold", "detection_nms_iou",
+            "detection_max_det", "detection_imgsz", "tracking_persistence"
+        ])
+    ).all()
+    config = {s.key: s.value for s in settings}
+
+    return schemas.ModelConfig(
+        selected_model=config.get("detection_model_path", "models/best_V5.pt"),
+        confidence_threshold=float(config.get("detection_threshold", "0.7")),
+        nms_iou_threshold=float(config.get("detection_nms_iou", "0.45")),
+        max_detections=int(config.get("detection_max_det", "100")),
+        inference_size=int(config.get("detection_imgsz", "1280")),
+        tracking_persistence=config.get("tracking_persistence", "true").lower() == "true",
+    )
+
+
+@app.put("/api/config/model", response_model=schemas.ModelConfig)
+async def update_model_config(config: schemas.ModelConfig, db: Session = Depends(get_db)):
+    mapping = {
+        "detection_model_path": config.selected_model,
+        "detection_threshold": str(config.confidence_threshold),
+        "detection_nms_iou": str(config.nms_iou_threshold),
+        "detection_max_det": str(config.max_detections),
+        "detection_imgsz": str(config.inference_size),
+        "tracking_persistence": str(config.tracking_persistence).lower(),
+    }
+    for key, value in mapping.items():
+        setting = db.query(models.SystemSetting).filter(models.SystemSetting.key == key).first()
+        if setting:
+            setting.value = value
+        else:
+            db.add(models.SystemSetting(key=key, value=value))
+    db.commit()
+
+    v_engine = vision_engine.get_vision_engine()
+    v_engine.apply_model_config(
+        model_path=config.selected_model,
+        confidence_threshold=config.confidence_threshold,
+        nms_iou_threshold=config.nms_iou_threshold,
+        max_detections=config.max_detections,
+        inference_size=config.inference_size,
+        tracking_persistence=config.tracking_persistence,
+    )
+    return config
+
+
+# ─── Virtual Line Configuration ──────────────────────────────────────────────
+@app.get("/api/config/virtual-line", response_model=schemas.VirtualLineConfig)
+async def get_virtual_line_config(db: Session = Depends(get_db)):
+    settings = db.query(models.SystemSetting).filter(
+        models.SystemSetting.key.in_([
+            "virtual_line_y_percent", "virtual_line_span_percent", "virtual_line_direction"
+        ])
+    ).all()
+    config = {s.key: s.value for s in settings}
+
+    return schemas.VirtualLineConfig(
+        position_percent=int(config.get("virtual_line_y_percent", "60")),
+        line_span_percent=int(config.get("virtual_line_span_percent", "80")),
+        direction=config.get("virtual_line_direction", "left-right"),
+    )
+
+
+@app.put("/api/config/virtual-line", response_model=schemas.VirtualLineConfig)
+async def update_virtual_line_config(config: schemas.VirtualLineConfig, db: Session = Depends(get_db)):
+    mapping = {
+        "virtual_line_y_percent": str(config.position_percent),
+        "virtual_line_span_percent": str(config.line_span_percent),
+        "virtual_line_direction": config.direction,
+    }
+    for key, value in mapping.items():
+        setting = db.query(models.SystemSetting).filter(models.SystemSetting.key == key).first()
+        if setting:
+            setting.value = value
+        else:
+            db.add(models.SystemSetting(key=key, value=value))
+    db.commit()
+
+    v_engine = vision_engine.get_vision_engine()
+    v_engine.apply_virtual_line_config(
+        position_percent=config.position_percent,
+        line_span_percent=config.line_span_percent,
+        direction=config.direction,
+    )
+    return config
 
 
 # ─── Auth ─────────────────────────────────────────────────────────────────────
