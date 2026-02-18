@@ -3,8 +3,9 @@ from fastapi.middleware.cors import CORSMiddleware
 from fastapi.security import OAuth2PasswordRequestForm
 from fastapi.staticfiles import StaticFiles
 from sqlalchemy.orm import Session
+from sqlalchemy import func
 from contextlib import asynccontextmanager
-from datetime import timedelta
+from datetime import timedelta, datetime
 import cv2
 import json
 import asyncio
@@ -242,6 +243,23 @@ async def websocket_endpoint(websocket: WebSocket):
         manager.disconnect(websocket)
 
 
+def _recompute_session_counters(db: Session, session_id: str):
+    session = db.query(models.Session).filter(models.Session.id == session_id).first()
+    if not session:
+        return
+    total_conforme = db.query(models.DetectionLog).filter(
+        models.DetectionLog.session_id == session_id,
+        models.DetectionLog.status == "conforme"
+    ).count()
+    total_rejete = db.query(models.DetectionLog).filter(
+        models.DetectionLog.session_id == session_id,
+        models.DetectionLog.status == "rejete"
+    ).count()
+    session.total_count = total_conforme
+    session.rejected_count = total_rejete
+
+
+
 # ─── Dashboard ────────────────────────────────────────────────────────────────
 @app.get("/api/dashboard/summary")
 async def get_dashboard_summary(db: Session = Depends(get_db)):
@@ -332,19 +350,163 @@ async def get_performance_analytics(db: Session = Depends(get_db)):
 
 
 # ─── Quality ──────────────────────────────────────────────────────────────────
-@app.get("/api/quality/summary")
+@app.get("/api/quality/summary", response_model=schemas.QualityDashboardResponse)
 async def get_quality_summary(db: Session = Depends(get_db)):
-    total = db.query(models.DetectionLog).count()
-    rejected = db.query(models.DetectionLog).filter(models.DetectionLog.status == "rejete").count()
+    logs = db.query(models.DetectionLog).all()
+    total = len(logs)
+    rejected = len([l for l in logs if l.status == "rejete"])
     rejection_rate = (rejected / total * 100) if total > 0 else 0
+
+    avg_logo = sum((l.logo_score or 0) for l in logs) / total if total else 0
+    avg_color = sum((l.color_score or 0) for l in logs) / total if total else 0
+    avg_detect = sum((l.detection_score or 0) for l in logs) / total if total else 0
+
+    bins = {"0-20%": 0, "20-40%": 0, "40-60%": 0, "60-80%": 0, "80-100%": 0}
+    for l in logs:
+        v = (l.detection_score or 0) * 100
+        if v < 20:
+            bins["0-20%"] += 1
+        elif v < 40:
+            bins["20-40%"] += 1
+        elif v < 60:
+            bins["40-60%"] += 1
+        elif v < 80:
+            bins["60-80%"] += 1
+        else:
+            bins["80-100%"] += 1
+
+    logo_conforme = len([l for l in logs if (l.logo_score or 0) >= 0.8])
+    logo_flou = len([l for l in logs if 0.5 <= (l.logo_score or 0) < 0.8])
+    logo_absent = len([l for l in logs if (l.logo_score or 0) < 0.5])
+    reviews_count = db.query(models.QualityReview).count()
+    recent_errors = db.query(models.DetectionLog).filter(
+        models.DetectionLog.status == "rejete",
+        models.DetectionLog.timestamp >= (datetime.utcnow() - timedelta(hours=24))
+    ).count()
 
     return {
         "totalInspected": total,
         "rejectedCount": rejected,
         "rejectionRate": rejection_rate,
-        "avgLogoScore": 0.92,
-        "avgColorScore": 0.88
+        "avgLogoScore": avg_logo,
+        "avgColorScore": avg_color,
+        "avgDetectionScore": avg_detect,
+        "confidenceDistribution": [{"range": k, "count": v} for k, v in bins.items()],
+        "logoDistribution": [
+            {"name": "Logo Conforme", "value": logo_conforme, "color": "#f97316"},
+            {"name": "Logo Flou", "value": logo_flou, "color": "#eab308"},
+            {"name": "Sans Logo", "value": logo_absent, "color": "#ef4444"},
+        ],
+        "recentErrors": recent_errors,
+        "reviewedCorrections": reviews_count,
     }
+
+
+@app.get("/api/quality/manual-verification", response_model=schemas.ManualVerificationResponse)
+async def get_manual_verification_queue(
+    page: int = 1,
+    page_size: int = 20,
+    search: str | None = None,
+    db: Session = Depends(get_db),
+):
+    page = max(page, 1)
+    page_size = min(max(page_size, 1), 100)
+
+    reviewed_ids = [r[0] for r in db.query(models.QualityReview.log_id).all()]
+
+    query = db.query(models.DetectionLog).filter(
+        (models.DetectionLog.status == "rejete") |
+        (models.DetectionLog.detection_score < 0.6)
+    )
+    if reviewed_ids:
+        query = query.filter(~models.DetectionLog.id.in_(reviewed_ids))
+    if search:
+        query = query.filter(models.DetectionLog.identifier.ilike(f"%{search}%"))
+
+    total = query.count()
+    items = query.order_by(models.DetectionLog.timestamp.desc()).offset((page - 1) * page_size).limit(page_size).all()
+
+    mapped = []
+    for l in items:
+        reason = "Non conforme" if l.status == "rejete" else "Confiance faible"
+        mapped.append({
+            "id": l.id,
+            "timestamp": l.timestamp,
+            "session_id": l.session_id,
+            "identifier": l.identifier,
+            "detection_score": l.detection_score,
+            "logo_score": l.logo_score,
+            "color_score": l.color_score,
+            "interval": l.interval,
+            "capture_url": l.capture_url,
+            "status": l.status,
+            "reason": reason,
+            "reviewed": False,
+        })
+    return {"items": mapped, "total": total}
+
+
+@app.get("/api/quality/reviews", response_model=list[schemas.QualityReview])
+async def get_quality_reviews(limit: int = 50, db: Session = Depends(get_db)):
+    return db.query(models.QualityReview).order_by(models.QualityReview.created_at.desc()).limit(limit).all()
+
+
+@app.get("/api/quality/anomalies", response_model=schemas.QualityAnomalyResponse)
+async def get_quality_anomalies(limit: int = 50, db: Session = Depends(get_db)):
+    logs = db.query(models.DetectionLog).order_by(models.DetectionLog.timestamp.desc()).limit(limit).all()
+    items = []
+    for l in logs:
+        is_low_conf = (l.detection_score or 0) < 0.6
+        is_reject = l.status == "rejete"
+        if not is_low_conf and not is_reject:
+            continue
+        severity = "high" if (l.detection_score or 0) < 0.5 or is_reject else "medium"
+        items.append({
+            "id": f"AN-{l.id}",
+            "type": "Sac rejeté" if is_reject else "Confiance faible",
+            "time": l.timestamp.strftime("%H:%M:%S"),
+            "severity": severity,
+            "description": f"Score détection {l.detection_score:.2f}, logo {l.logo_score:.2f}, couleur {l.color_score:.2f}",
+            "thumbnail": f"/static/captures/{l.capture_url.split('/')[-1]}" if l.capture_url else None,
+            "status": "pending",
+        })
+    return {"items": items, "total": len(items)}
+
+
+@app.patch("/api/logs/{log_id}", response_model=schemas.DetectionLog)
+async def review_log(log_id: int, payload: schemas.UpdateLogRequest, db: Session = Depends(get_db)):
+    log = db.query(models.DetectionLog).filter(models.DetectionLog.id == log_id).first()
+    if not log:
+        raise HTTPException(status_code=404, detail="Log not found")
+
+    original_status = log.status
+
+    action = payload.action.lower()
+    if action in ["validate", "valider", "correct"]:
+        log.status = payload.target_status or "conforme"
+    elif action in ["reject", "rejeter"]:
+        log.status = payload.target_status or "rejete"
+    elif action in ["ignore", "ignorer"]:
+        pass
+
+    if payload.corrected_identifier:
+        log.identifier = payload.corrected_identifier
+
+    review = models.QualityReview(
+        log_id=log.id,
+        action=payload.action,
+        target_status=log.status,
+        notes=payload.notes,
+        reviewer=payload.reviewer,
+    )
+    db.add(review)
+
+    if original_status != log.status:
+        _recompute_session_counters(db, log.session_id)
+
+    db.commit()
+    db.refresh(log)
+    return log
 
 
 # ─── Camera Configuration ────────────────────────────────────────────────────

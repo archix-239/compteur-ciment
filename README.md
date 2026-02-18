@@ -101,9 +101,9 @@ Suivi de l'intégration réelle (remplacement des données fictives par des appe
 | 6 | **Production — Gestion des Sessions** | Fait | Sessions réelles connectées via API: démarrage/arrêt, session active, stats live et historique paginé (`GET /sessions/`, `POST /sessions/start`, `POST /sessions/stop/{id}`). |
 | 7 | **Production — Journal de Production** | Fait | Tableau branché sur `GET /api/logs/` avec pagination backend + filtres (statut, recherche identifiant), miniatures et ouverture capture. |
 | 8 | Production — Timeline | En attente | — |
-| 9 | Qualité — Tableau de Bord | En attente | — |
-| 10 | Qualité — Vérification Manuelle | En attente | — |
-| 11 | Qualité — Détection d'Anomalies | En attente | — |
+| 9 | **Qualité — Tableau de Bord** | Fait | Dashboard qualité branché sur `/api/quality/summary` avec distributions de confiance/logo calculées depuis les logs réels. |
+| 10 | **Qualité — Vérification Manuelle** | Fait | File de revue connectée (`GET /api/quality/manual-verification`) + action opérateur via `PATCH /api/logs/{id}` (Valider/Rejeter) + historique (`GET /api/quality/reviews`). |
+| 11 | **Qualité — Détection d'Anomalies** | Fait | Liste d'anomalies réelles depuis `/api/quality/anomalies` (rejets + scores faibles) avec miniatures snapshots backend. |
 | 12 | Alertes — Gestion des Alertes | En attente | — |
 | 13 | Rapports — Production | En attente | — |
 | 14 | Rapports — Export de Données | En attente | — |
@@ -134,6 +134,11 @@ Suivi de l'intégration réelle (remplacement des données fictives par des appe
 | `POST` | `/sessions/start` | Démarre une session de production (idempotent si déjà active) |
 | `POST` | `/sessions/stop/{session_id}` | Arrête une session active |
 | `GET` | `/api/logs/` | Journal de production paginé (filtres `status`, `search`, `session_id`) |
+| `PATCH` | `/api/logs/{id}` | Met à jour la décision qualité d'un sac (validation/rejet/correction) et journalise la revue |
+| `GET` | `/api/quality/manual-verification` | File des sacs à vérifier manuellement (pagination + recherche) |
+| `GET` | `/api/quality/reviews` | Historique des actions de revue humaine |
+| `GET` | `/api/quality/anomalies` | Anomalies qualité générées depuis les logs (rejets/faible confiance) |
+| `GET` | `/api/quality/summary` | KPI et distributions qualité réelles pour les graphiques |
 | `WS` | `/ws/video` | Stream vidéo temps réel (frames JPEG en base64 via WebSocket) |
 | `WS` | `/ws` | Événements temps réel (COUNT_EVENT, etc.) |
 | `GET` | `/api/vision/video_feed` | Stream MJPEG (fallback, conservé pour compatibilité) |

@@ -106,6 +106,77 @@ class VirtualLineConfig(BaseModel):
     line_span_percent: int = 80
     direction: str = "left-right"
 
+
+class QualityReviewBase(BaseModel):
+    log_id: int
+    action: str
+    target_status: Optional[str] = None
+    notes: Optional[str] = None
+    reviewer: str = "operator"
+
+
+class QualityReview(QualityReviewBase):
+    id: int
+    created_at: datetime
+    class Config:
+        from_attributes = True
+
+
+class UpdateLogRequest(BaseModel):
+    action: str
+    target_status: Optional[str] = None
+    notes: Optional[str] = None
+    reviewer: str = "operator"
+    corrected_identifier: Optional[str] = None
+
+
+class ManualVerificationItem(BaseModel):
+    id: int
+    timestamp: datetime
+    session_id: str
+    identifier: str
+    detection_score: float
+    logo_score: float
+    color_score: float
+    interval: float
+    capture_url: Optional[str] = None
+    status: str
+    reason: str
+    reviewed: bool
+
+
+class ManualVerificationResponse(BaseModel):
+    items: List[ManualVerificationItem]
+    total: int
+
+
+class QualityAnomaly(BaseModel):
+    id: str
+    type: str
+    time: str
+    severity: str
+    description: str
+    thumbnail: Optional[str] = None
+    status: str
+
+
+class QualityAnomalyResponse(BaseModel):
+    items: List[QualityAnomaly]
+    total: int
+
+
+class QualityDashboardResponse(BaseModel):
+    totalInspected: int
+    rejectedCount: int
+    rejectionRate: float
+    avgLogoScore: float
+    avgColorScore: float
+    avgDetectionScore: float
+    confidenceDistribution: List[dict]
+    logoDistribution: List[dict]
+    recentErrors: int
+    reviewedCorrections: int
+
 class Token(BaseModel):
     access_token: str
     token_type: str
