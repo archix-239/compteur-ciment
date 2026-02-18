@@ -366,13 +366,26 @@ async def test_camera_connection(config: schemas.CameraConfig):
 
 
 def _test_camera_sync(config: schemas.CameraConfig) -> dict:
-    """Test camera connection synchronously (runs in thread pool)."""
+    """Test camera connection synchronously (runs in thread pool).
+
+    If the tested source matches the running vision engine source,
+    temporarily stop the engine to avoid webcam access conflicts on Windows.
+    """
     import os as _os
+    import sys as _sys
 
     if config.source_type == "webcam":
         source = int(config.url) if config.url.isdigit() else 0
     else:
         source = config.url
+
+    # Check if we need to pause the vision engine (same source conflict)
+    v_engine = vision_engine.get_vision_engine()
+    engine_was_running = False
+    if v_engine.running and v_engine.video_source == source:
+        print(f"INFO: Pause du moteur de vision pour test caméra (source: {source})")
+        v_engine.stop()
+        engine_was_running = True
 
     cap = None
     try:
@@ -382,7 +395,15 @@ def _test_camera_sync(config: schemas.CameraConfig) -> dict:
             cap = cv2.VideoCapture(source, cv2.CAP_FFMPEG)
         elif isinstance(source, str) and (source.startswith("http://") or source.startswith("https://")):
             cap = cv2.VideoCapture(source, cv2.CAP_FFMPEG)
+        elif isinstance(source, int) or (isinstance(source, str) and source.isdigit()):
+            # Webcam: use DirectShow on Windows
+            idx = int(source) if isinstance(source, str) else source
+            if _sys.platform == "win32":
+                cap = cv2.VideoCapture(idx, cv2.CAP_DSHOW)
+            else:
+                cap = cv2.VideoCapture(idx)
         else:
+            # Video file
             cap = cv2.VideoCapture(source)
 
         if not cap.isOpened():
@@ -407,6 +428,10 @@ def _test_camera_sync(config: schemas.CameraConfig) -> dict:
     finally:
         if cap is not None:
             cap.release()
+        # Restart vision engine if we paused it
+        if engine_was_running:
+            print("INFO: Redémarrage du moteur de vision après test caméra")
+            v_engine.start()
 
 
 # ─── Auth ─────────────────────────────────────────────────────────────────────

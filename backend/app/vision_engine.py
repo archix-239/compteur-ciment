@@ -8,6 +8,7 @@ from collections import defaultdict
 from pyzbar.pyzbar import decode as qr_decode
 from datetime import datetime
 import os
+import sys
 import signal
 
 
@@ -82,6 +83,11 @@ class VisionEngine:
         with self.video_subscribers_lock:
             self.video_subscribers.discard(queue)
 
+    @staticmethod
+    def _is_webcam_index(source) -> bool:
+        """Check if source is a webcam index (int or digit string)."""
+        return isinstance(source, int) or (isinstance(source, str) and source.isdigit())
+
     def _open_capture(self):
         """Open video capture with proper settings for RTSP/HTTP/webcam sources."""
         source = self.video_source
@@ -93,13 +99,22 @@ class VisionEngine:
         elif isinstance(source, str) and (source.startswith("http://") or source.startswith("https://")):
             # HTTP/ONVIF stream
             cap = cv2.VideoCapture(source, cv2.CAP_FFMPEG)
+        elif self._is_webcam_index(source):
+            # Webcam: use DirectShow on Windows (MSMF is unreliable)
+            idx = int(source) if isinstance(source, str) else source
+            if sys.platform == "win32":
+                cap = cv2.VideoCapture(idx, cv2.CAP_DSHOW)
+            else:
+                cap = cv2.VideoCapture(idx)
         else:
-            # Local webcam or file
+            # Video file
             cap = cv2.VideoCapture(source)
 
         if cap.isOpened():
             # Reduce internal buffer to minimize latency
             cap.set(cv2.CAP_PROP_BUFFERSIZE, 1)
+        else:
+            print(f"ERREUR: _open_capture a échoué pour la source: {source}")
 
         return cap
 
@@ -107,7 +122,7 @@ class VisionEngine:
         if self.running:
             return
 
-        print(f"INFO: Démarrage du moteur de vision (Source: {self.video_source})...")
+        print(f"INFO: Démarrage du moteur de vision (Source: {self.video_source}, Platform: {sys.platform})...")
 
         try:
             self.model = YOLO(self.model_path)
@@ -120,6 +135,16 @@ class VisionEngine:
         if not self.cap.isOpened():
             print(f"ERREUR: Impossible d'ouvrir la source vidéo {self.video_source}")
             return
+
+        # Verify we can actually read a frame before starting the loop
+        ret, test_frame = self.cap.read()
+        if not ret or test_frame is None:
+            print(f"ERREUR: Source ouverte mais impossible de lire une frame (source: {self.video_source})")
+            self.cap.release()
+            self.cap = None
+            return
+
+        print(f"INFO: Source vidéo OK — première frame lue ({test_frame.shape[1]}x{test_frame.shape[0]})")
 
         self._stop_event.clear()
         self.running = True
@@ -181,6 +206,7 @@ class VisionEngine:
         last_broadcast = 0
         reconnect_attempts = 0
         max_reconnect_delay = 30  # seconds
+        frames_read = 0
 
         while self.running and not self._stop_event.is_set():
             if self.cap is None or not self.cap.isOpened():
@@ -215,6 +241,12 @@ class VisionEngine:
 
             # Reset reconnect counter on successful read
             reconnect_attempts = 0
+            frames_read += 1
+            if frames_read == 1:
+                print(f"INFO: Vision engine — flux actif, première frame capturée")
+            elif frames_read % 300 == 0:
+                sub_count = len(self.video_subscribers)
+                print(f"INFO: Vision engine — {frames_read} frames lues, {sub_count} subscriber(s) WebSocket")
 
             frame = cv2.resize(frame, (1280, 720))
             self.latest_frame = frame.copy()
