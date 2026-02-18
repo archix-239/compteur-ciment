@@ -1,17 +1,17 @@
-import { useState, useEffect } from 'react';
+import { useState, useEffect, useRef } from 'react';
 import { API_URL, WS_URL } from '@/lib/api';
+import { useVideoStream } from '@/hooks/useVideoStream';
 import { Camera, Activity, Shield, AlertCircle, Maximize2, RefreshCcw } from 'lucide-react';
 import { Card } from '@/components/ui/card';
-import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
 import { PageHeader } from '@/components/PageHeader';
 import { StatusBadge } from '@/components/StatusBadge';
 
 export default function LiveStream() {
-  const [streamStatus, setStreamStatus] = useState<'online' | 'offline' | 'connecting'>('connecting');
+  const imgRef = useRef<HTMLImageElement>(null);
+  const { status: streamStatus, fps, reconnect } = useVideoStream(imgRef, true);
+
   const [stats, setStats] = useState({
-    fps: 0,
-    latency: 0,
     detectedObjects: 0,
     verifiedBags: 0,
     rejectedBags: 0
@@ -27,11 +27,10 @@ export default function LiveStream() {
           verifiedBags: data.totalBags,
           rejectedBags: data.rejectedBags
         }));
-        setStreamStatus('online');
       })
-      .catch(() => setStreamStatus('offline'));
+      .catch(() => {});
 
-    // WebSocket for live updates
+    // WebSocket for live count updates
     const ws = new WebSocket(WS_URL);
     ws.onmessage = (event) => {
       const message = JSON.parse(event.data);
@@ -59,7 +58,7 @@ export default function LiveStream() {
           status={streamStatus}
           label={streamStatus === 'online' ? 'EN LIGNE' : streamStatus === 'connecting' ? 'CONNEXION...' : 'HORS LIGNE'}
         />
-        <Button variant="outline" size="sm" className="gap-2 border-zinc-800 text-white">
+        <Button variant="outline" size="sm" className="gap-2 border-zinc-800 text-white" onClick={reconnect}>
           <RefreshCcw className="w-4 h-4" /> Reconnexion
         </Button>
       </PageHeader>
@@ -67,19 +66,20 @@ export default function LiveStream() {
       <div className="grid grid-cols-1 lg:grid-cols-4 gap-6">
         <div className="lg:col-span-3 space-y-4">
           <Card className="relative aspect-video bg-black overflow-hidden border-orange-500/20 group">
-            {/* Flux vidéo réel */}
+            {/* Flux vidéo via WebSocket */}
             <img
-              src={`${API_URL}/api/vision/video_feed`}
+              ref={imgRef}
               alt="Live Stream"
               className="absolute inset-0 w-full h-full object-contain"
-              onError={(e) => {
-                e.currentTarget.style.display = 'none';
-                setStreamStatus('offline');
-              }}
+              style={{ display: streamStatus === 'online' ? 'block' : 'none' }}
             />
-            <div className="absolute inset-0 flex items-center justify-center text-orange-500/20 pointer-events-none">
-              <Camera className="w-20 h-20 opacity-20" />
-            </div>
+
+            {/* Placeholder quand offline */}
+            {streamStatus !== 'online' && (
+              <div className="absolute inset-0 flex items-center justify-center text-orange-500/20 pointer-events-none">
+                <Camera className="w-20 h-20 opacity-20" />
+              </div>
+            )}
 
             {/* Ligne Virtuelle */}
             <div className="absolute inset-y-0 left-1/2 w-0.5 bg-yellow-400/50 shadow-[0_0_10px_rgba(250,204,21,0.5)]">
@@ -92,7 +92,7 @@ export default function LiveStream() {
             <div className="absolute top-4 left-4 flex flex-col gap-2">
               <div className="bg-black/60 backdrop-blur-md border border-white/10 p-2 rounded text-[10px] font-mono">
                 <div className="text-orange-400">CAM_01 // CONVOYEUR_FRONTAL</div>
-                <div className="text-white/60">1280x720 @ {stats.fps} FPS</div>
+                <div className="text-white/60">1280x720 @ {fps} FPS</div>
               </div>
             </div>
 
@@ -100,13 +100,15 @@ export default function LiveStream() {
             <div className="absolute top-4 right-4 bg-black/60 backdrop-blur-md border border-white/10 p-3 rounded">
               <div className="flex items-center gap-4 text-xs font-mono">
                 <div>
-                  <div className="text-white/40 mb-1 text-[8px]">LATENCE</div>
-                  <div className="text-green-400 font-bold">{stats.latency}ms</div>
+                  <div className="text-white/40 mb-1 text-[8px]">FPS</div>
+                  <div className={`font-bold ${fps > 0 ? 'text-green-400' : 'text-red-400'}`}>{fps}</div>
                 </div>
                 <div className="w-px h-8 bg-white/10" />
                 <div>
-                  <div className="text-white/40 mb-1 text-[8px]">OBJETS</div>
-                  <div className="text-orange-400 font-bold">{stats.detectedObjects}</div>
+                  <div className="text-white/40 mb-1 text-[8px]">STATUT</div>
+                  <div className={`font-bold uppercase text-[10px] ${streamStatus === 'online' ? 'text-green-400' : 'text-red-400'}`}>
+                    {streamStatus === 'online' ? 'LIVE' : streamStatus === 'connecting' ? '...' : 'OFF'}
+                  </div>
                 </div>
               </div>
             </div>
@@ -127,26 +129,16 @@ export default function LiveStream() {
                 <Maximize2 className="w-5 h-5" />
               </Button>
             </div>
-
-            {/* Overlay Détection (Simulation) */}
-            <div className="absolute top-1/3 left-1/4 w-32 h-40 border-2 border-green-500 rounded animate-pulse">
-              <div className="absolute -top-6 left-0 bg-green-500 text-black text-[10px] font-bold px-1 flex items-center gap-1">
-                <Shield className="w-3 h-3" /> ID:402 [VÉRIFIÉ]
-              </div>
-              <div className="absolute -bottom-6 left-0 text-[10px] font-mono text-green-400 bg-black/60 px-1">
-                L:0.92 C:0.88
-              </div>
-            </div>
           </Card>
 
           <div className="grid grid-cols-3 gap-4">
             <Card className="p-4 bg-card/50 border-zinc-800">
               <div className="text-[10px] text-muted-foreground mb-1 uppercase font-bold">Modèle Actif</div>
-              <div className="font-semibold text-white">YOLOv11-Custom</div>
+              <div className="font-semibold text-white">YOLOv8-Custom</div>
             </Card>
             <Card className="p-4 bg-card/50 border-zinc-800">
-              <div className="text-[10px] text-muted-foreground mb-1 uppercase font-bold">Temps d'Inférence</div>
-              <div className="font-semibold text-white">12ms</div>
+              <div className="text-[10px] text-muted-foreground mb-1 uppercase font-bold">FPS Stream</div>
+              <div className="font-semibold text-white">{fps} fps</div>
             </Card>
             <Card className="p-4 bg-card/50 border-zinc-800">
               <div className="text-[10px] text-muted-foreground mb-1 uppercase font-bold">Zone de Détection</div>

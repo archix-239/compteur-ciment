@@ -1,4 +1,4 @@
-import { useState, useEffect, useCallback } from 'react';
+import { useState, useEffect, useCallback, useRef } from 'react';
 import { Camera, Save, Wifi, Settings2, RefreshCcw, Video, Loader2, CheckCircle2, XCircle, AlertCircle } from 'lucide-react';
 import { Card } from '@/components/ui/card';
 import { Input } from '@/components/ui/input';
@@ -13,7 +13,8 @@ import {
 } from "@/components/ui/select";
 import { Switch } from "@/components/ui/switch";
 import { Slider } from "@/components/ui/slider";
-import { fetchApi, API_URL } from '@/lib/api';
+import { fetchApi } from '@/lib/api';
+import { useVideoStream } from '@/hooks/useVideoStream';
 
 interface CameraConfig {
   source_type: string;
@@ -47,6 +48,9 @@ export default function CameraSettings() {
   const [testing, setTesting] = useState(false);
   const [testResult, setTestResult] = useState<TestResult | null>(null);
   const [saveSuccess, setSaveSuccess] = useState<boolean | null>(null);
+  const [showPreview, setShowPreview] = useState(false);
+  const previewImgRef = useRef<HTMLImageElement>(null);
+  const { status: streamStatus, fps: streamFps } = useVideoStream(previewImgRef, showPreview);
 
   const loadConfig = useCallback(async () => {
     try {
@@ -94,9 +98,11 @@ export default function CameraSettings() {
         body: JSON.stringify(config),
       });
       setTestResult(result);
+      setShowPreview(result.success);
     } catch (err) {
       console.error('Erreur test connexion:', err);
       setTestResult({ success: false, message: 'Erreur réseau lors du test.' });
+      setShowPreview(false);
     } finally {
       setTesting(false);
     }
@@ -265,31 +271,38 @@ export default function CameraSettings() {
 
         <div className="space-y-6">
           <Card className="p-6 space-y-4 bg-black/40 border-dashed border-zinc-800 relative min-h-[300px] flex flex-col items-center justify-center text-center">
-            {testResult?.success ? (
-              <>
-                <div className="absolute top-4 left-4 flex items-center gap-2 text-[10px] font-mono text-green-400 font-bold uppercase tracking-widest">
-                  <div className="w-1.5 h-1.5 rounded-full bg-green-400 animate-pulse shadow-[0_0_8px_rgba(34,197,94,0.6)]" />
-                  PREVISUALISATION_FLUX
-                </div>
-                <img
-                  src={`${API_URL}/api/vision/video_feed`}
-                  alt="Flux caméra"
-                  className="w-full h-auto rounded max-h-[260px] object-contain"
-                  onError={(e) => {
-                    (e.target as HTMLImageElement).style.display = 'none';
-                  }}
-                />
-              </>
+            {showPreview && streamStatus === 'online' ? (
+              <div className="absolute top-4 left-4 flex items-center gap-2 text-[10px] font-mono text-green-400 font-bold uppercase tracking-widest">
+                <div className="w-1.5 h-1.5 rounded-full bg-green-400 animate-pulse shadow-[0_0_8px_rgba(34,197,94,0.6)]" />
+                LIVE — {streamFps} FPS
+              </div>
             ) : (
+              <div className="absolute top-4 left-4 flex items-center gap-2 text-[10px] font-mono text-zinc-500 font-bold uppercase tracking-widest">
+                <div className="w-1.5 h-1.5 rounded-full bg-zinc-500" />
+                PREVISUALISATION_FLUX
+              </div>
+            )}
+
+            {/* WebSocket video stream image */}
+            <img
+              ref={previewImgRef}
+              alt="Flux caméra"
+              className="w-full h-auto rounded max-h-[260px] object-contain"
+              style={{ display: showPreview && streamStatus === 'online' ? 'block' : 'none' }}
+            />
+
+            {/* Placeholder when no stream */}
+            {!(showPreview && streamStatus === 'online') && (
               <>
-                <div className="absolute top-4 left-4 flex items-center gap-2 text-[10px] font-mono text-zinc-500 font-bold uppercase tracking-widest">
-                  <div className="w-1.5 h-1.5 rounded-full bg-zinc-500" />
-                  PREVISUALISATION_FLUX
-                </div>
                 <Camera className="w-16 h-16 text-zinc-800 mb-4" />
-                <p className="text-xs text-zinc-500">L'aperçu de la caméra apparaîtra ici<br/>une fois la connexion testée</p>
+                <p className="text-xs text-zinc-500">
+                  {showPreview && streamStatus === 'connecting'
+                    ? 'Connexion au flux vidéo en cours...'
+                    : "L'aperçu de la caméra apparaîtra ici\naprès un test de connexion réussi"}
+                </p>
               </>
             )}
+
             <Button
               variant="outline"
               size="sm"

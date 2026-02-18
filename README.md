@@ -93,11 +93,11 @@ Suivi de l'intégration réelle (remplacement des données fictives par des appe
 
 | # | Interface | Statut | Détails |
 |---|-----------|--------|---------|
-| 1 | **Configuration — Paramètres Caméra** | Fait | GET/PUT `/api/config/camera`, POST `/api/config/camera/test` (test réel OpenCV). Formulaire connecté, sauvegarde en BDD, test de connexion caméra fonctionnel. |
+| 1 | **Configuration — Paramètres Caméra** | Fait | GET/PUT `/api/config/camera`, POST `/api/config/camera/test` (test réel OpenCV). Formulaire connecté, sauvegarde en BDD, test de connexion caméra fonctionnel. Preview WebSocket vidéo. |
 | 2 | Configuration — Modèle IA | En attente | — |
 | 3 | Configuration — Ligne Virtuelle | En attente | — |
 | 4 | Configuration — Templates | En attente | — |
-| 5 | Monitoring — Flux en Direct | En attente | — |
+| 5 | **Monitoring — Flux en Direct** | Fait | Streaming vidéo via WebSocket `/ws/video` (base64 JPEG). Hook `useVideoStream` réutilisable. FPS en temps réel. Reconnexion automatique. Support RTSP/HTTP/Webcam. |
 | 6 | Production — Gestion des Sessions | En attente | — |
 | 7 | Production — Journal de Production | En attente | — |
 | 8 | Production — Timeline | En attente | — |
@@ -118,10 +118,29 @@ Suivi de l'intégration réelle (remplacement des données fictives par des appe
 | 23 | Maintenance — Diagnostics | En attente | — |
 | 24 | Intégration — Tiers | En attente | — |
 
-### API Caméra — Référence rapide
+### API & WebSocket — Référence rapide
 
 | Méthode | Endpoint | Description |
 |---------|----------|-------------|
 | `GET` | `/api/config/camera` | Récupère la configuration caméra actuelle |
 | `PUT` | `/api/config/camera` | Sauvegarde la configuration caméra |
 | `POST` | `/api/config/camera/test` | Teste la connexion à la source vidéo (vérification réelle via OpenCV) |
+| `WS` | `/ws/video` | Stream vidéo temps réel (frames JPEG en base64 via WebSocket) |
+| `WS` | `/ws` | Événements temps réel (COUNT_EVENT, etc.) |
+| `GET` | `/api/vision/video_feed` | Stream MJPEG (fallback, conservé pour compatibilité) |
+
+### Architecture du streaming vidéo
+
+```
+Caméra (RTSP/HTTP/USB) → OpenCV → VisionEngine (thread dédié)
+    ↓ YOLO detection + annotation
+    ↓ encode JPEG + base64
+    ↓ broadcast via queue (backpressure: drop oldest frame)
+WebSocket /ws/video → Frontend (useVideoStream hook) → <img> element
+```
+
+**Protocoles caméra supportés :**
+- **RTSP** : `rtsp://user:pass@192.168.1.x:554/stream` (transport TCP forcé pour fiabilité)
+- **HTTP/ONVIF** : `http://192.168.1.x:8080/video`
+- **Webcam locale** : Index entier (0, 1, 2...)
+- **Fichier vidéo** : Chemin absolu vers .mp4, .avi, etc.
