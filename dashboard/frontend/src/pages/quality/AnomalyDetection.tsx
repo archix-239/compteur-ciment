@@ -97,7 +97,7 @@ export default function AnomalyDetection() {
             <div className="flex items-center gap-2 border-b border-zinc-800 pb-4"><Settings className="w-5 h-5 text-orange-500" /><h3 className="text-sm font-bold text-white uppercase tracking-widest">Actions Correctives</h3></div>
             <div className="space-y-4">
               <Button variant="outline" className="w-full justify-start gap-3 border-zinc-800 h-12 text-xs text-white hover:bg-zinc-800" disabled><Filter className="w-4 h-4 text-orange-500" /> Ajuster filtres qualité</Button>
-              <Button variant="outline" className="w-full justify-start gap-3 border-zinc-800 h-12 text-xs text-white hover:bg-zinc-800" disabled><Clock className="w-4 h-4 text-blue-500" /> Réviser les cas < 0.60</Button>
+              <Button variant="outline" className="w-full justify-start gap-3 border-zinc-800 h-12 text-xs text-white hover:bg-zinc-800" disabled><Clock className="w-4 h-4 text-blue-500" /> Réviser les cas &lt; 0.60</Button>
               <Button className="w-full gap-3 bg-red-950/20 text-red-500 border border-red-900/50 h-12 text-xs font-bold uppercase tracking-widest hover:bg-red-950/40" disabled><AlertTriangle className="w-4 h-4" /> Forcer Redémarrage Moteur IA</Button>
             </div>
           </Card>
