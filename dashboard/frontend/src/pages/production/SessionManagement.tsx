@@ -1,6 +1,6 @@
-import { useCallback, useEffect, useMemo, useState } from 'react';
-import { fetchApi } from '@/lib/api';
-import { Clock, Play, Square, History, BarChart2, Calendar, Search, Loader2, AlertTriangle, Trash2 } from 'lucide-react';
+import { useState, useEffect, useMemo } from 'react';
+import { API_URL } from '@/lib/api';
+import { Clock, Play, Square, History, BarChart2, Calendar, Search } from 'lucide-react';
 import { Card } from '@/components/ui/card';
 import { Button } from '@/components/ui/button';
 import { Badge } from '@/components/ui/badge';
@@ -15,115 +15,175 @@ interface SessionItem {
   rejected_count: number;
   status: 'active' | 'completed';
 }
-interface SessionListResponse { items: SessionItem[]; total: number; active_session_id: string | null; }
 
-function formatDuration(start: string, end: string | null) {
-  const s = new Date(start).getTime();
-  const e = end ? new Date(end).getTime() : Date.now();
-  const diff = Math.max(0, Math.floor((e - s) / 1000));
-  return `${String(Math.floor(diff / 3600)).padStart(2, '0')}:${String(Math.floor((diff % 3600) / 60)).padStart(2, '0')}:${String(diff % 60).padStart(2, '0')}`;
+interface SessionResponse {
+  items: SessionItem[];
+  total: number;
 }
 
 export default function SessionManagement() {
   const [sessions, setSessions] = useState<SessionItem[]>([]);
   const [activeSession, setActiveSession] = useState<SessionItem | null>(null);
-  const [loading, setLoading] = useState(true);
-  const [actionLoading, setActionLoading] = useState<'start' | 'stop' | 'delete' | null>(null);
   const [search, setSearch] = useState('');
-  const [page, setPage] = useState(1);
-  const [pageSize] = useState(10);
-  const [total, setTotal] = useState(0);
-  const [error, setError] = useState<string | null>(null);
-  const [selected, setSelected] = useState<string[]>([]);
 
-  const loadSessions = useCallback(async () => {
-    try {
-      setLoading(true);
-      setError(null);
-      const response = await fetchApi(`/sessions/?page=${page}&page_size=${pageSize}`) as SessionListResponse;
-      setSessions(response.items);
-      setTotal(response.total);
-      setActiveSession(response.items.find((s) => s.status === 'active') || null);
-      setSelected((prev) => prev.filter((id) => response.items.some((s) => s.id === id)));
-    } catch (err) {
-      console.error(err);
-      setError('Impossible de charger les sessions.');
-    } finally { setLoading(false); }
-  }, [page, pageSize]);
-
-  useEffect(() => { loadSessions(); const t = setInterval(loadSessions, 4000); return () => clearInterval(t); }, [loadSessions]);
-
-  const startSession = async () => { try { setActionLoading('start'); await fetchApi('/sessions/start', { method: 'POST' }); await loadSessions(); } catch { setError('Échec du démarrage de session.'); } finally { setActionLoading(null); } };
-  const stopSession = async (id: string) => { try { setActionLoading('stop'); await fetchApi(`/sessions/stop/${id}`, { method: 'POST' }); await loadSessions(); } catch { setError('Échec de l’arrêt de session.'); } finally { setActionLoading(null); } };
-
-  const deleteOne = async (id: string) => {
-    try {
-      setActionLoading('delete');
-      await fetchApi(`/api/sessions/${id}`, { method: 'DELETE' });
-      await loadSessions();
-    } catch { setError('Suppression impossible (session active ?).'); }
-    finally { setActionLoading(null); }
+  const fetchSessions = () => {
+    fetch(`${API_URL}/sessions/?page=1&page_size=50`)
+      .then(res => res.json())
+      .then((data: SessionResponse) => {
+        const items = data.items || [];
+        setSessions(items);
+        const active = items.find(s => s.status === 'active') || null;
+        setActiveSession(active);
+      })
+      .catch(err => console.error('Error fetching sessions:', err));
   };
 
-  const deleteBatch = async () => {
-    if (selected.length === 0) return;
-    try {
-      setActionLoading('delete');
-      await fetchApi('/api/sessions/batch', { method: 'DELETE', body: JSON.stringify({ session_ids: selected }) });
-      setSelected([]);
-      await loadSessions();
-    } catch { setError('Suppression multiple impossible (session active ?).'); }
-    finally { setActionLoading(null); }
+  useEffect(() => {
+    fetchSessions();
+    const timer = setInterval(fetchSessions, 4000);
+    return () => clearInterval(timer);
+  }, []);
+
+  const startSession = () => {
+    fetch(`${API_URL}/sessions/start`, { method: 'POST' })
+      .then(res => res.json())
+      .then(() => fetchSessions())
+      .catch(err => console.error('Error starting session:', err));
   };
 
-  const filtered = useMemo(() => sessions.filter((s) => s.id.toLowerCase().includes(search.toLowerCase())), [sessions, search]);
-  const activeRate = useMemo(() => activeSession ? Number((((activeSession.total_count + activeSession.rejected_count) / Math.max(1, (Date.now() - new Date(activeSession.start_time).getTime()) / 60000))).toFixed(1)) : 0, [activeSession]);
+  const stopSession = (id: string) => {
+    fetch(`${API_URL}/sessions/stop/${id}`, { method: 'POST' })
+      .then(res => res.json())
+      .then(() => fetchSessions())
+      .catch(err => console.error('Error stopping session:', err));
+  };
+
+  const filteredSessions = useMemo(
+    () => sessions.filter((s) => s.id.toLowerCase().includes(search.toLowerCase())),
+    [sessions, search],
+  );
+
+  const activeRate = useMemo(() => {
+    if (!activeSession) return 0;
+    const elapsedMin = Math.max(1, (Date.now() - new Date(activeSession.start_time).getTime()) / 60000);
+    return (((activeSession.total_count + activeSession.rejected_count) / elapsedMin)).toFixed(1);
+  }, [activeSession]);
+
+  const todayTotal = useMemo(
+    () => sessions.reduce((acc, s) => acc + s.total_count + s.rejected_count, 0),
+    [sessions],
+  );
 
   return (
     <div className="p-6 space-y-6">
       <div className="flex items-center justify-between">
-        <div><h1 className="text-2xl font-bold tracking-tight text-white">Gestion des Sessions</h1><p className="text-muted-foreground">Démarrez/arrêtez la production et gérez l’historique.</p></div>
+        <div>
+          <h1 className="text-2xl font-bold tracking-tight text-white">Gestion des Sessions</h1>
+          <p className="text-muted-foreground">Gérez les équipes de production et surveillez la performance par session</p>
+        </div>
         <div className="flex gap-3">
-          <Button variant="outline" className="gap-2 border-zinc-800 text-white hover:bg-zinc-900" onClick={loadSessions}><History className="w-4 h-4" /> Rafraîchir</Button>
-          <Button variant="outline" className="gap-2 border-red-900 text-red-300 hover:bg-red-950/30" onClick={deleteBatch} disabled={selected.length === 0 || actionLoading !== null}><Trash2 className="w-4 h-4" /> Supprimer sélection ({selected.length})</Button>
-          <Button className="gap-2 bg-green-600 hover:bg-green-700 text-white font-bold" disabled={!!activeSession || actionLoading !== null} onClick={startSession}>{actionLoading === 'start' ? <Loader2 className="w-4 h-4 animate-spin" /> : <Play className="w-4 h-4 fill-current" />} Nouvelle Session</Button>
+          <Button variant="outline" className="gap-2 border-zinc-800 text-white hover:bg-zinc-900" onClick={fetchSessions}>
+            <History className="w-4 h-4" /> Réactualiser
+          </Button>
+          <Button className="gap-2 bg-green-600 hover:bg-green-700 text-white font-bold" disabled={!!activeSession} onClick={startSession}>
+            <Play className="w-4 h-4 fill-current" /> Nouvelle Session
+          </Button>
         </div>
       </div>
 
-      {error && <Card className="p-4 border-red-500/30 bg-red-500/10 text-red-300 flex items-center gap-2"><AlertTriangle className="w-4 h-4" /> {error}</Card>}
-
       <div className="grid grid-cols-1 md:grid-cols-3 gap-6">
-        {activeSession ? <Card className="p-6 bg-orange-600 text-white space-y-4 border-none"><div className="text-3xl font-bold font-mono">{activeSession.total_count} conformes</div><p className="text-xs">Rejetés: {activeSession.rejected_count}</p><Button size="sm" variant="secondary" onClick={() => stopSession(activeSession.id)}><Square className="w-3 h-3 mr-1 fill-current" /> ARRÊTER</Button></Card> : <Card className="p-6 bg-zinc-900 text-zinc-500">Aucune Session Active</Card>}
-        <Card className="p-6 bg-card/50 border-zinc-800"><div className="flex items-center gap-2 text-zinc-500 text-[10px] uppercase"><Clock className="w-4 h-4 text-orange-500" /> Cadence Active</div><div className="text-3xl font-bold text-white font-mono">{activeRate} <span className="text-sm text-zinc-500">sacs/min</span></div></Card>
-        <Card className="p-6 bg-card/50 border-zinc-800"><div className="flex items-center gap-2 text-zinc-500 text-[10px] uppercase"><BarChart2 className="w-4 h-4 text-orange-500" /> Total Sessions</div><div className="text-3xl font-bold text-white font-mono">{total}</div></Card>
+        {activeSession ? (
+          <Card className="p-6 bg-orange-600 text-white space-y-4 border-none shadow-lg shadow-orange-900/20">
+            <div className="flex justify-between items-start">
+              <div className="p-2 bg-white/20 rounded-lg"><Play className="w-6 h-6 fill-current" /></div>
+              <Badge className="bg-white/20 text-white border-none text-[10px] font-bold">SESSION ACTIVE</Badge>
+            </div>
+            <div>
+              <div className="text-3xl font-bold font-mono">{activeSession.total_count} sacs</div>
+              <p className="text-[11px] opacity-70 italic mt-1 text-orange-100">ID: {activeSession.id}</p>
+            </div>
+            <div className="pt-4 border-t border-white/20 flex justify-between items-center">
+              <div className="text-xs font-mono font-bold tracking-wider">{new Date(activeSession.start_time).toLocaleTimeString()}</div>
+              <Button size="sm" variant="secondary" className="h-7 text-[10px] bg-white text-orange-600 hover:bg-zinc-100 font-bold" onClick={() => stopSession(activeSession.id)}>
+                <Square className="w-3 h-3 mr-1 fill-current" /> ARRÊTER
+              </Button>
+            </div>
+          </Card>
+        ) : (
+          <Card className="p-6 bg-zinc-900 text-zinc-500 space-y-4 border-dashed border-zinc-800 flex flex-col items-center justify-center">
+            <Square className="w-12 h-12 opacity-20" />
+            <p className="text-sm font-bold uppercase tracking-widest">Aucune Session Active</p>
+          </Card>
+        )}
+
+        <Card className="p-6 bg-card/50 border-zinc-800 space-y-4">
+          <div className="flex items-center gap-2 text-zinc-500 font-bold uppercase text-[10px] tracking-widest"><Clock className="w-4 h-4 text-orange-500" /> Cadence Actuelle</div>
+          <div className="text-3xl font-bold text-white font-mono">{activeRate} <span className="text-sm font-normal text-zinc-500">sacs / min</span></div>
+          <div className="w-full bg-zinc-900 h-1.5 rounded-full overflow-hidden border border-zinc-800"><div className="h-full bg-green-500 shadow-[0_0_8px_rgba(34,197,94,0.4)]" style={{ width: `${Math.min(100, Number(activeRate) * 4)}%` }} /></div>
+          <p className="text-[10px] text-zinc-500 italic">Performance en temps réel depuis la session active</p>
+        </Card>
+
+        <Card className="p-6 bg-card/50 border-zinc-800 space-y-4">
+          <div className="flex items-center gap-2 text-zinc-500 font-bold uppercase text-[10px] tracking-widest"><BarChart2 className="w-4 h-4 text-orange-500" /> Total Équipe</div>
+          <div className="text-3xl font-bold text-white font-mono">{todayTotal.toLocaleString()} <span className="text-sm font-normal text-zinc-500">sacs</span></div>
+          <p className="text-[10px] text-green-400 font-medium">Données réelles agrégées des sessions</p>
+        </Card>
       </div>
 
       <Card className="p-4 bg-card/50 border-zinc-800">
         <div className="flex justify-between items-center mb-6 px-2">
-          <h3 className="font-bold text-white text-sm uppercase tracking-wider">Historique</h3>
-          <div className="relative"><Search className="absolute left-2.5 top-1/2 -translate-y-1/2 w-3.5 h-3.5 text-zinc-500" /><Input placeholder="Rechercher..." value={search} onChange={(e) => setSearch(e.target.value)} className="h-8 pl-8 w-[220px] bg-zinc-900 border-zinc-800 text-xs text-white" /></div>
+          <h3 className="font-bold text-white text-sm uppercase tracking-wider">Historique des Sessions Récentes</h3>
+          <div className="flex gap-2">
+            <div className="relative">
+              <Search className="absolute left-2.5 top-1/2 -translate-y-1/2 w-3.5 h-3.5 text-zinc-500" />
+              <Input placeholder="Rechercher une session..." value={search} onChange={(e) => setSearch(e.target.value)} className="h-8 pl-8 w-[200px] bg-zinc-900 border-zinc-800 text-xs text-white" />
+            </div>
+            <Button variant="outline" size="icon" className="h-8 w-8 border-zinc-800 text-zinc-400 hover:text-white"><Calendar className="w-3.5 h-3.5" /></Button>
+          </div>
         </div>
+
         <div className="rounded-xl border border-zinc-800 overflow-hidden">
           <Table>
-            <TableHeader className="bg-zinc-900/80"><TableRow className="border-zinc-800"><TableHead className="w-[40px]" /><TableHead>ID</TableHead><TableHead>Début</TableHead><TableHead>Fin</TableHead><TableHead>Durée</TableHead><TableHead className="text-center">Conformes</TableHead><TableHead className="text-center">Rejetés</TableHead><TableHead className="text-right">Statut</TableHead><TableHead className="text-right">Actions</TableHead></TableRow></TableHeader>
+            <TableHeader className="bg-zinc-900/80">
+              <TableRow className="border-zinc-800">
+                <TableHead className="text-zinc-500 text-[11px] font-bold uppercase">ID Session</TableHead>
+                <TableHead className="text-zinc-500 text-[11px] font-bold uppercase">Début</TableHead>
+                <TableHead className="text-zinc-500 text-[11px] font-bold uppercase">Fin</TableHead>
+                <TableHead className="text-zinc-500 text-[11px] font-bold uppercase">Durée</TableHead>
+                <TableHead className="text-zinc-500 text-[11px] font-bold uppercase text-center">Sacs Comptés</TableHead>
+                <TableHead className="text-zinc-500 text-[11px] font-bold uppercase text-center">Débit Moyen</TableHead>
+                <TableHead className="text-zinc-500 text-[11px] font-bold uppercase text-right">Statut</TableHead>
+              </TableRow>
+            </TableHeader>
             <TableBody>
-              {loading ? <TableRow><TableCell colSpan={9} className="text-center text-zinc-500 py-6">Chargement...</TableCell></TableRow> : filtered.map((s) => (
-                <TableRow key={s.id} className="border-zinc-800 hover:bg-zinc-800/30">
-                  <TableCell><input type="checkbox" checked={selected.includes(s.id)} disabled={s.status === 'active'} onChange={(e) => setSelected((prev) => e.target.checked ? [...prev, s.id] : prev.filter((x) => x !== s.id))} /></TableCell>
-                  <TableCell className="font-mono text-[11px] text-white">{s.id}</TableCell>
-                  <TableCell className="text-xs text-zinc-300">{new Date(s.start_time).toLocaleString()}</TableCell>
-                  <TableCell className="text-xs text-zinc-500">{s.end_time ? new Date(s.end_time).toLocaleString() : '-'}</TableCell>
-                  <TableCell className="text-xs text-zinc-400 font-mono">{formatDuration(s.start_time, s.end_time)}</TableCell>
-                  <TableCell className="text-center text-green-400 font-mono">{s.total_count}</TableCell>
-                  <TableCell className="text-center text-red-400 font-mono">{s.rejected_count}</TableCell>
-                  <TableCell className="text-right"><Badge variant={s.status === 'active' ? 'default' : 'outline'}>{s.status}</Badge></TableCell>
-                  <TableCell className="text-right"><Button size="sm" variant="outline" disabled={s.status === 'active' || actionLoading !== null} onClick={() => deleteOne(s.id)}>Supprimer</Button></TableCell>
-                </TableRow>
-              ))}
+              {filteredSessions.map((session) => {
+                const start = new Date(session.start_time).getTime();
+                const end = session.end_time ? new Date(session.end_time).getTime() : Date.now();
+                const diffSec = Math.max(0, Math.floor((end - start) / 1000));
+                const rate = ((session.total_count + session.rejected_count) / Math.max(1, diffSec / 60)).toFixed(1);
+                const hh = String(Math.floor(diffSec / 3600)).padStart(2, '0');
+                const mm = String(Math.floor((diffSec % 3600) / 60)).padStart(2, '0');
+                const ss = String(diffSec % 60).padStart(2, '0');
+
+                return (
+                  <TableRow key={session.id} className="border-zinc-800 hover:bg-zinc-800/30 transition-colors">
+                    <TableCell className="font-mono font-bold text-white text-[11px]">{session.id}</TableCell>
+                    <TableCell className="text-zinc-300 text-sm">{new Date(session.start_time).toLocaleTimeString()}</TableCell>
+                    <TableCell className="text-zinc-500 text-sm">{session.end_time ? new Date(session.end_time).toLocaleTimeString() : '-'}</TableCell>
+                    <TableCell className="text-zinc-400 text-xs font-mono">{`${hh}:${mm}:${ss}`}</TableCell>
+                    <TableCell className="text-center font-mono font-bold text-orange-400">{(session.total_count + session.rejected_count).toLocaleString()}</TableCell>
+                    <TableCell className="text-center text-zinc-400 text-xs italic">{rate} s/m</TableCell>
+                    <TableCell className="text-right">
+                      <Badge variant={session.status === 'active' ? 'default' : 'outline'} className={session.status === 'active' ? 'bg-green-600/20 text-green-400 border-green-500/30 hover:bg-green-600/30' : 'border-zinc-800 text-zinc-500'}>
+                        <span className="text-[9px] font-bold uppercase tracking-widest">{session.status === 'active' ? 'En cours' : 'Terminé'}</span>
+                      </Badge>
+                    </TableCell>
+                  </TableRow>
+                );
+              })}
             </TableBody>
           </Table>
         </div>
-        <div className="flex justify-between mt-4"><Button variant="outline" size="sm" disabled={page === 1} onClick={() => setPage((p) => p - 1)}>Précédent</Button><Button variant="outline" size="sm" disabled={page * pageSize >= total} onClick={() => setPage((p) => p + 1)}>Suivant</Button></div>
       </Card>
     </div>
   );

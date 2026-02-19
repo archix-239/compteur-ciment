@@ -343,6 +343,7 @@ class VisionEngine:
     def _run_loop(self):
         frame_interval = 1.0 / self.target_fps
         last_broadcast = 0
+        last_frame_ts = 0.0
         reconnect_attempts = 0
         max_reconnect_delay = 30  # seconds
         frames_read = 0
@@ -401,6 +402,25 @@ class VisionEngine:
                         break
                     frame = newer
 
+            # Software post-processing (works for RTSP/files where cap.set may be ignored)
+            target_w, target_h = self._resolution_to_wh(self.camera_resolution)
+            if frame.shape[1] != target_w or frame.shape[0] != target_h:
+                frame = cv2.resize(frame, (target_w, target_h), interpolation=cv2.INTER_LINEAR)
+
+            alpha = max(0.1, min(3.0, float(self.camera_contrast) / 50.0))
+            beta = int((float(self.camera_brightness) - 50.0) * 2.0)
+            frame = cv2.convertScaleAbs(frame, alpha=alpha, beta=beta)
+
+            # For video files, throttle read loop to requested FPS
+            source_str = str(self.video_source)
+            is_file_source = (not self._is_webcam_index(self.video_source)) and (not source_str.startswith("rtsp://")) and (not source_str.startswith("http://")) and (not source_str.startswith("https://"))
+            if is_file_source and self.camera_fps > 0:
+                now_sleep = time.monotonic()
+                target_interval = 1.0 / float(self.camera_fps)
+                if last_frame_ts > 0 and (now_sleep - last_frame_ts) < target_interval:
+                    time.sleep(max(0.0, target_interval - (now_sleep - last_frame_ts)))
+                last_frame_ts = time.monotonic()
+
             # Reset reconnect counter on successful read
             reconnect_attempts = 0
             frames_read += 1
@@ -410,7 +430,6 @@ class VisionEngine:
                 sub_count = len(self.video_subscribers)
                 print(f"INFO: Vision engine — {frames_read} frames lues, {sub_count} subscriber(s) WebSocket")
 
-            frame = cv2.resize(frame, (1280, 720))
             self.latest_frame = frame.copy()
 
             # Broadcast raw frame immediately (before YOLO) for instant feedback

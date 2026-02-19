@@ -163,14 +163,16 @@ WebSocket /ws/video → Frontend (useVideoStream hook) → <img> element
 ## Correctifs Post-Test (Feedback Opérationnel)
 
 ### Correctif 1 — Application réelle des paramètres caméra
-- Le backend applique désormais explicitement les propriétés OpenCV à la capture: `FRAME_WIDTH/HEIGHT`, `FPS`, `BRIGHTNESS`, `CONTRAST`, `AUTOFOCUS`.
-- Lors d'une sauvegarde caméra, le flux est redémarré proprement pour garantir l'application sur les caméras qui ne supportent pas le hot-apply.
+- Le backend applique les propriétés OpenCV matérielles (`FRAME_WIDTH/HEIGHT`, `FPS`, `BRIGHTNESS`, `CONTRAST`, `AUTOFOCUS`) **et** un post-processing logiciel garanti dans la boucle vision (`resize` + `convertScaleAbs`).
+- Pour les fichiers vidéo, le FPS demandé est respecté via régulation temporelle (`sleep`) côté boucle de lecture.
+- Lors d'une sauvegarde caméra, le flux est redémarré proprement pour les sources qui ne supportent pas le hot-apply.
 
 ### Correctif 2 — Ligne virtuelle directionnelle + visualisation réelle
-- Nouveaux endpoints `GET/PUT /api/config/line` avec `type` (`horizontal`/`vertical`) et `direction` (`top-down`, `bottom-up`, `left-right`, `right-left`).
-- La page **Configuration > Ligne Virtuelle** intègre maintenant un flux réel WebSocket avec overlay React de la ligne (ligne visible en mouvement quand les sliders changent).
+- Nouveaux endpoints `GET/PUT /api/config/line` avec `type` (`horizontal`/`vertical`) et `direction` (`top-down`, `bottom-up`, `left-right`, `right-left`) + cohérence forcée type/direction.
+- La page **Configuration > Ligne Virtuelle** conserve le design validé et affiche le flux réel WebSocket avec overlay React de la ligne (source visuelle unique).
 
 ### Correctif 3 — Live Stream & Sessions
 - Suppression du doublon d'overlay: le backend envoie une image sans ligne, et React dessine l'overlay (source de vérité unique).
+- Le design Industrial Dark Mode de **Flux en Direct** et **Gestion des Sessions** est restauré; seules les valeurs backend ont été reconnectées (sans refonte structurelle).
 - Les badges Live Stream (FPS, nom caméra, modèle actif) sont branchés sur des données runtime via `GET /api/config/runtime`.
-- Ajout des endpoints de suppression de sessions: `DELETE /api/sessions/{id}` et `DELETE /api/sessions/batch` + support frontend des suppressions multiples via checkboxes.
+- Endpoints de suppression sessions conservés côté backend: `DELETE /api/sessions/{id}` et `DELETE /api/sessions/batch`.

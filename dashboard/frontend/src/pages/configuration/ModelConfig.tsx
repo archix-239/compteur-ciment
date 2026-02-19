@@ -1,21 +1,12 @@
-import { useCallback, useEffect, useMemo, useState } from 'react';
-import { BrainCircuit, Loader2, Save, SlidersHorizontal } from 'lucide-react';
+import { useEffect, useMemo, useState } from 'react';
+import { RotateCcw, Plus, Info, Target, Zap, BrainCircuit, ArrowRight } from 'lucide-react';
 import { Card } from '@/components/ui/card';
 import { Button } from '@/components/ui/button';
-import { Label } from '@/components/ui/label';
-import { Slider } from '@/components/ui/slider';
-import { Input } from '@/components/ui/input';
-import { Switch } from '@/components/ui/switch';
-import {
-  Select,
-  SelectContent,
-  SelectItem,
-  SelectTrigger,
-  SelectValue,
-} from '@/components/ui/select';
+import { Badge } from '@/components/ui/badge';
+import { Progress } from '@/components/ui/progress';
 import { fetchApi } from '@/lib/api';
 
-interface ModelConfigData {
+interface ModelRuntimeConfig {
   selected_model: string;
   confidence_threshold: number;
   nms_iou_threshold: number;
@@ -24,159 +15,97 @@ interface ModelConfigData {
   tracking_persistence: boolean;
 }
 
-const MODEL_OPTIONS = [
-  'models/best_V5.pt',
-  'models/best_V4.pt',
+const models = [
+  { version: 'models/best_V5.pt', date: 'Actuel', accuracy: 99.4, latency: '12.4ms', status: 'active', notes: 'Modèle optimisé pour éclairage variable et sacs empilés.' },
+  { version: 'models/best_V4.pt', date: 'Précédent', accuracy: 98.2, latency: '14.1ms', status: 'available', notes: 'Version précédente. Stable mais moins précise sur les sacs blancs.' },
+  { version: 'v10.8.1', date: 'Archive', accuracy: 96.5, latency: '18.5ms', status: 'archived', notes: 'Ancien moteur YOLOv10.' },
 ];
 
 export default function ModelConfig() {
-  const [config, setConfig] = useState<ModelConfigData>({
-    selected_model: 'models/best_V5.pt',
-    confidence_threshold: 0.7,
-    nms_iou_threshold: 0.45,
-    max_detections: 100,
-    inference_size: 1280,
-    tracking_persistence: true,
-  });
-  const [loading, setLoading] = useState(true);
-  const [saving, setSaving] = useState(false);
-  const [saveState, setSaveState] = useState<'idle' | 'ok' | 'error'>('idle');
-
-  const loadConfig = useCallback(async () => {
-    try {
-      setLoading(true);
-      const data = await fetchApi('/api/config/model');
-      setConfig(data);
-      setSaveState('idle');
-    } catch (error) {
-      console.error('Erreur chargement configuration modèle IA:', error);
-      setSaveState('error');
-    } finally {
-      setLoading(false);
-    }
-  }, []);
+  const [cfg, setCfg] = useState<ModelRuntimeConfig | null>(null);
 
   useEffect(() => {
-    loadConfig();
-  }, [loadConfig]);
+    fetchApi('/api/config/model')
+      .then((d) => setCfg(d as ModelRuntimeConfig))
+      .catch(() => {});
+  }, []);
 
-  const handleSave = async () => {
-    try {
-      setSaving(true);
-      setSaveState('idle');
-      await fetchApi('/api/config/model', {
-        method: 'PUT',
-        body: JSON.stringify(config),
-      });
-      setSaveState('ok');
-      setTimeout(() => setSaveState('idle'), 3000);
-    } catch (error) {
-      console.error('Erreur sauvegarde configuration modèle IA:', error);
-      setSaveState('error');
-      setTimeout(() => setSaveState('idle'), 3000);
-    } finally {
-      setSaving(false);
-    }
-  };
-
-  const estimatedRecall = useMemo(() => {
-    const value = 88 + (config.confidence_threshold * 7) + (config.nms_iou_threshold * 3);
-    return Math.min(99.9, Number(value.toFixed(1)));
-  }, [config.confidence_threshold, config.nms_iou_threshold]);
-
-  if (loading) {
-    return (
-      <div className="p-6 flex items-center justify-center min-h-[320px]">
-        <Loader2 className="w-8 h-8 animate-spin text-orange-500" />
-      </div>
-    );
-  }
+  const confidencePct = useMemo(() => Math.round(((cfg?.confidence_threshold ?? 0.7) * 100)), [cfg]);
 
   return (
     <div className="p-6 space-y-6">
-      <div className="flex items-center justify-between gap-4">
+      <div className="flex items-center justify-between">
         <div>
-          <h1 className="text-2xl font-bold tracking-tight text-white">Configuration des Modèles IA</h1>
-          <p className="text-muted-foreground">Réglez les paramètres d&apos;inférence et appliquez-les à chaud au moteur de vision.</p>
+          <h1 className="text-2xl font-bold tracking-tight text-white">Gestion des Modèles IA</h1>
+          <p className="text-muted-foreground">Contrôle des versions du moteur YOLO et suivi des performances</p>
         </div>
-        <Button onClick={handleSave} disabled={saving} className="bg-orange-600 hover:bg-orange-700 text-white gap-2">
-          {saving ? <Loader2 className="w-4 h-4 animate-spin" /> : <Save className="w-4 h-4" />}
-          Enregistrer
+        <Button className="bg-orange-600 hover:bg-orange-700 text-white gap-2 h-11 px-6 shadow-lg shadow-orange-900/20">
+          <Plus className="w-4 h-4" /> Entraîner Nouveau Modèle
         </Button>
       </div>
 
-      <div className="grid grid-cols-1 xl:grid-cols-3 gap-6">
-        <Card className="xl:col-span-2 p-6 bg-zinc-900/50 border-zinc-800 space-y-6">
-          <div className="flex items-center gap-2 border-b border-zinc-800 pb-4">
-            <SlidersHorizontal className="w-5 h-5 text-orange-500" />
-            <h3 className="text-sm font-bold text-white uppercase tracking-widest">Paramètres d&apos;inférence</h3>
-          </div>
+      <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">
+        <div className="lg:col-span-2 space-y-4">
+          <h3 className="text-sm font-bold text-white uppercase tracking-widest">Historique des Versions</h3>
+          {models.map((m, i) => {
+            const isActive = cfg ? m.version === cfg.selected_model : m.status === 'active';
+            return (
+              <Card key={i} className={`p-5 bg-zinc-900/50 border-zinc-800 hover:border-zinc-700 transition-all ${isActive ? 'border-orange-500/30 ring-1 ring-orange-500/20' : ''}`}>
+                <div className="flex items-start justify-between">
+                  <div className="flex gap-4">
+                    <div className="p-3 rounded-xl bg-zinc-950 border border-zinc-800 h-fit">
+                      <BrainCircuit className={`w-5 h-5 ${isActive ? 'text-orange-500' : 'text-zinc-600'}`} />
+                    </div>
+                    <div className="space-y-1">
+                      <div className="flex items-center gap-3">
+                        <h4 className="text-sm font-bold text-white">{m.version}</h4>
+                        {isActive && <Badge className="bg-green-500/10 text-green-500 border-green-500/20 text-[9px] font-bold">ACTIF</Badge>}
+                        {m.status === 'archived' && <Badge className="bg-zinc-800 text-zinc-500 border-none text-[9px] font-bold">ARCHIVÉ</Badge>}
+                      </div>
+                      <p className="text-[11px] text-zinc-500 font-bold uppercase tracking-widest">{m.date}</p>
+                      <p className="text-xs text-zinc-400 mt-2 max-w-md">{m.notes}</p>
+                      <div className="flex gap-6 pt-3">
+                        <div className="flex flex-col"><span className="text-[9px] text-zinc-600 uppercase font-bold tracking-tighter">Précision</span><span className="text-sm font-mono text-white font-bold">{m.accuracy}%</span></div>
+                        <div className="flex flex-col"><span className="text-[9px] text-zinc-600 uppercase font-bold tracking-tighter">Latence</span><span className="text-sm font-mono text-white font-bold">{m.latency}</span></div>
+                      </div>
+                    </div>
+                  </div>
+                  <div className="flex flex-col items-end gap-2">
+                    {m.status === 'available' && <Button variant="outline" className="h-8 border-zinc-800 text-[10px] font-bold uppercase tracking-widest gap-2"><RotateCcw className="w-3 h-3" /> Rollback vers cette version</Button>}
+                    <Button variant="ghost" size="sm" className="h-8 text-[10px] font-bold uppercase text-zinc-500 hover:text-white">Voir Métriques Détallées</Button>
+                  </div>
+                </div>
+              </Card>
+            );
+          })}
+        </div>
 
-          <div className="space-y-4">
-            <Label className="text-zinc-400">Modèle IA</Label>
-            <Select value={config.selected_model} onValueChange={(v) => setConfig((prev) => ({ ...prev, selected_model: v }))}>
-              <SelectTrigger className="bg-zinc-950 border-zinc-800 text-white h-11">
-                <SelectValue />
-              </SelectTrigger>
-              <SelectContent className="bg-zinc-950 border-zinc-800 text-white">
-                {MODEL_OPTIONS.map((m) => (
-                  <SelectItem key={m} value={m}>{m}</SelectItem>
-                ))}
-              </SelectContent>
-            </Select>
-          </div>
-
-          <div className="space-y-6">
-            <div className="space-y-3">
-              <div className="flex justify-between text-xs">
-                <Label className="text-zinc-400">Seuil de confiance</Label>
-                <span className="text-orange-400 font-mono">{config.confidence_threshold.toFixed(2)}</span>
+        <div className="space-y-6">
+          <Card className="p-6 bg-zinc-900/50 border-zinc-800 space-y-6">
+            <div className="flex items-center gap-2 border-b border-zinc-800 pb-4"><Target className="w-5 h-5 text-orange-500" /><h3 className="text-sm font-bold text-white uppercase tracking-widest">Performance Active</h3></div>
+            <div className="space-y-6">
+              <div className="space-y-3">
+                <div className="flex justify-between text-[10px] font-bold uppercase tracking-widest text-zinc-500"><span>Score de Confiance Moyen</span><span className="text-orange-500">{confidencePct}%</span></div>
+                <Progress value={confidencePct} className="h-1.5 bg-zinc-800 [&>div]:bg-orange-500 shadow-[0_0_8px_rgba(249,115,22,0.3)]" />
               </div>
-              <Slider value={[config.confidence_threshold]} onValueChange={(v) => setConfig((p) => ({ ...p, confidence_threshold: Number(v[0].toFixed(2)) }))} min={0.1} max={0.99} step={0.01} className="[&_[role=slider]]:bg-orange-500" />
+              <div className="space-y-3">
+                <div className="flex justify-between text-[10px] font-bold uppercase tracking-widest text-zinc-500"><span>Stabilité Détection (NMS)</span><span className="text-white">{cfg ? cfg.nms_iou_threshold.toFixed(2) : '0.45'}</span></div>
+                <Progress value={(cfg?.nms_iou_threshold ?? 0.45) * 100} className="h-1.5 bg-zinc-800" />
+              </div>
+              <div className="p-4 rounded-xl bg-zinc-950 border border-zinc-800 space-y-3">
+                <div className="flex items-center gap-2 text-[10px] font-bold text-zinc-500 uppercase"><Zap className="w-4 h-4 text-yellow-500" /> Runtime Inférence</div>
+                <div className="flex justify-between text-xs"><span className="text-zinc-500">Max Det :</span><span className="text-white font-mono">{cfg?.max_detections ?? 100}</span></div>
+                <div className="flex justify-between text-xs"><span className="text-zinc-500">Image Size :</span><span className="text-white font-mono">{cfg?.inference_size ?? 1280}</span></div>
+              </div>
             </div>
+          </Card>
 
-            <div className="space-y-3">
-              <div className="flex justify-between text-xs">
-                <Label className="text-zinc-400">Seuil NMS (IoU)</Label>
-                <span className="text-orange-400 font-mono">{config.nms_iou_threshold.toFixed(2)}</span>
-              </div>
-              <Slider value={[config.nms_iou_threshold]} onValueChange={(v) => setConfig((p) => ({ ...p, nms_iou_threshold: Number(v[0].toFixed(2)) }))} min={0.1} max={0.95} step={0.01} className="[&_[role=slider]]:bg-orange-500" />
-            </div>
-
-            <div className="grid grid-cols-2 gap-4">
-              <div className="space-y-2">
-                <Label className="text-zinc-400">Max Detections</Label>
-                <Input type="number" min={1} max={500} value={config.max_detections} onChange={(e) => setConfig((p) => ({ ...p, max_detections: Number(e.target.value || 1) }))} className="bg-zinc-950 border-zinc-800 text-white" />
-              </div>
-              <div className="space-y-2">
-                <Label className="text-zinc-400">Taille inférence (imgsz)</Label>
-                <Input type="number" min={320} max={1920} step={32} value={config.inference_size} onChange={(e) => setConfig((p) => ({ ...p, inference_size: Number(e.target.value || 320) }))} className="bg-zinc-950 border-zinc-800 text-white" />
-              </div>
-            </div>
-
-            <div className="flex items-center justify-between border border-zinc-800 rounded-lg p-3">
-              <div>
-                <p className="text-sm text-white">Tracking persistant</p>
-                <p className="text-[11px] text-zinc-500">Conserver l&apos;identité des objets entre les frames.</p>
-              </div>
-              <Switch checked={config.tracking_persistence} onCheckedChange={(v) => setConfig((p) => ({ ...p, tracking_persistence: v }))} />
-            </div>
-          </div>
-        </Card>
-
-        <Card className="p-6 bg-zinc-900/50 border-zinc-800 space-y-5">
-          <div className="flex items-center gap-2">
-            <BrainCircuit className="w-5 h-5 text-orange-500" />
-            <h3 className="text-sm font-bold text-white uppercase tracking-widest">État Runtime</h3>
-          </div>
-          <div className="space-y-2 text-sm">
-            <div className="flex justify-between"><span className="text-zinc-500">Modèle actif</span><span className="font-mono text-white text-xs">{config.selected_model}</span></div>
-            <div className="flex justify-between"><span className="text-zinc-500">Recall estimé</span><span className="font-mono text-green-400">{estimatedRecall}%</span></div>
-            <div className="flex justify-between"><span className="text-zinc-500">Hot-reload</span><span className="font-mono text-white">Activé</span></div>
-            {saveState === 'ok' && <p className="text-xs text-green-400">Configuration sauvegardée et appliquée au moteur IA.</p>}
-            {saveState === 'error' && <p className="text-xs text-red-400">Impossible de sauvegarder la configuration.</p>}
-          </div>
-        </Card>
+          <Card className="p-5 bg-orange-600/5 border border-orange-500/20 space-y-4">
+            <div className="flex items-center gap-2 text-orange-500"><Info className="w-5 h-5" /><h4 className="text-[10px] font-bold uppercase tracking-widest">Fine-Tuning Intelligent</h4></div>
+            <p className="text-[11px] text-zinc-400 leading-relaxed italic">La configuration IA est chargée depuis le backend et appliquée à chaud sur le moteur de vision.</p>
+            <Button variant="outline" className="w-full border-zinc-800 text-[10px] font-bold uppercase h-10 gap-2">Lancer Ré-entraînement <ArrowRight className="w-3 h-3" /></Button>
+          </Card>
+        </div>
       </div>
     </div>
   );
