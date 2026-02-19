@@ -158,3 +158,19 @@ WebSocket /ws/video → Frontend (useVideoStream hook) → <img> element
 - **HTTP/ONVIF** : `http://192.168.1.x:8080/video`
 - **Webcam locale** : Index entier (0, 1, 2...)
 - **Fichier vidéo** : Chemin absolu vers .mp4, .avi, etc.
+
+
+## Correctifs Post-Test (Feedback Opérationnel)
+
+### Correctif 1 — Application réelle des paramètres caméra
+- Le backend applique désormais explicitement les propriétés OpenCV à la capture: `FRAME_WIDTH/HEIGHT`, `FPS`, `BRIGHTNESS`, `CONTRAST`, `AUTOFOCUS`.
+- Lors d'une sauvegarde caméra, le flux est redémarré proprement pour garantir l'application sur les caméras qui ne supportent pas le hot-apply.
+
+### Correctif 2 — Ligne virtuelle directionnelle + visualisation réelle
+- Nouveaux endpoints `GET/PUT /api/config/line` avec `type` (`horizontal`/`vertical`) et `direction` (`top-down`, `bottom-up`, `left-right`, `right-left`).
+- La page **Configuration > Ligne Virtuelle** intègre maintenant un flux réel WebSocket avec overlay React de la ligne (ligne visible en mouvement quand les sliders changent).
+
+### Correctif 3 — Live Stream & Sessions
+- Suppression du doublon d'overlay: le backend envoie une image sans ligne, et React dessine l'overlay (source de vérité unique).
+- Les badges Live Stream (FPS, nom caméra, modèle actif) sont branchés sur des données runtime via `GET /api/config/runtime`.
+- Ajout des endpoints de suppression de sessions: `DELETE /api/sessions/{id}` et `DELETE /api/sessions/batch` + support frontend des suppressions multiples via checkboxes.

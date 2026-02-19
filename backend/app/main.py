@@ -114,7 +114,7 @@ async def lifespan(app: FastAPI):
     try:
         settings = db.query(models.SystemSetting).filter(
             models.SystemSetting.key.in_([
-                "camera_source_type", "camera_url",
+                "camera_source_type", "camera_url", "camera_resolution", "camera_fps", "camera_brightness", "camera_contrast", "camera_autofocus",
                 "detection_model_path", "detection_threshold", "detection_nms_iou", "detection_max_det", "detection_imgsz", "tracking_persistence",
                 "virtual_line_x", "virtual_line_y_percent", "virtual_line_span_percent", "virtual_line_direction"
             ])
@@ -128,6 +128,14 @@ async def lifespan(app: FastAPI):
             v_engine.video_source = int(url) if url.isdigit() else 0
         else:
             v_engine.video_source = url
+
+        v_engine.apply_camera_settings(
+            resolution=config.get("camera_resolution", "720p"),
+            fps=int(config.get("camera_fps", "30")),
+            brightness=int(config.get("camera_brightness", "50")),
+            contrast=int(config.get("camera_contrast", "65")),
+            autofocus=config.get("camera_autofocus", "true").lower() == "true",
+        )
 
         v_engine.apply_model_config(
             model_path=config.get("detection_model_path", "models/best_V5.pt"),
@@ -549,18 +557,30 @@ async def update_camera_config(config: schemas.CameraConfig, db: Session = Depen
             db.add(models.SystemSetting(key=key, value=value))
     db.commit()
 
-    # Determine new video source
+    # Determine new video source and apply camera settings in runtime
     v_engine = vision_engine.get_vision_engine()
     if config.source_type == "webcam":
         new_source = int(config.url) if config.url.isdigit() else 0
     else:
         new_source = config.url
 
-    if v_engine.video_source != new_source:
+    source_changed = v_engine.video_source != new_source
+    if source_changed:
         v_engine.video_source = new_source
-        if v_engine.running:
-            v_engine.stop()
-            v_engine.start()
+
+    # Apply OpenCV camera properties (width/height/fps/brightness/contrast/autofocus)
+    v_engine.apply_camera_settings(
+        resolution=config.resolution,
+        fps=config.fps,
+        brightness=config.brightness,
+        contrast=config.contrast,
+        autofocus=config.autofocus,
+    )
+
+    # Some cameras cannot apply at runtime -> restart stream cleanly
+    if v_engine.running:
+        v_engine.stop()
+        v_engine.start()
 
     return config
 
@@ -570,6 +590,22 @@ async def test_camera_connection(config: schemas.CameraConfig):
     loop = asyncio.get_event_loop()
     result = await loop.run_in_executor(None, _test_camera_sync, config)
     return result
+
+
+@app.get("/api/config/runtime")
+async def get_runtime_config(db: Session = Depends(get_db)):
+    v_engine = vision_engine.get_vision_engine()
+    settings = db.query(models.SystemSetting).filter(
+        models.SystemSetting.key.in_(["camera_url", "detection_model_path"])
+    ).all()
+    cfg = {s.key: s.value for s in settings}
+    runtime = v_engine.get_runtime_info()
+    return {
+        "camera_name": runtime.get("camera_name", f"CAM_{cfg.get('camera_url', '0')}"),
+        "model": cfg.get("detection_model_path", runtime.get("model", "models/best_V5.pt")),
+        "capture_fps": runtime.get("capture_fps", 0),
+        "line": runtime.get("line", {}),
+    }
 
 
 def _test_camera_sync(config: schemas.CameraConfig) -> dict:
@@ -733,6 +769,45 @@ async def update_virtual_line_config(config: schemas.VirtualLineConfig, db: Sess
     return config
 
 
+@app.get("/api/config/line")
+async def get_line_config(db: Session = Depends(get_db)):
+    cfg = await get_virtual_line_config(db)
+    line_type = "vertical" if cfg.direction in ["left-right", "right-left"] else "horizontal"
+    return {
+        "type": line_type,
+        "direction": cfg.direction,
+        "position_percent": cfg.position_percent,
+        "line_span_percent": cfg.line_span_percent,
+    }
+
+
+@app.put("/api/config/line")
+async def update_line_config(payload: dict, db: Session = Depends(get_db)):
+    direction = payload.get("direction", "left-right")
+    line_type = payload.get("type")
+    position_percent = int(payload.get("position_percent", 60))
+    line_span_percent = int(payload.get("line_span_percent", 80))
+
+    # Force coherence between type and direction
+    if direction in ["top-down", "bottom-up"]:
+        line_type = "horizontal"
+    elif direction in ["left-right", "right-left"]:
+        line_type = "vertical"
+
+    cfg = schemas.VirtualLineConfig(
+        position_percent=position_percent,
+        line_span_percent=line_span_percent,
+        direction=direction,
+    )
+    await update_virtual_line_config(cfg, db)
+    return {
+        "type": line_type,
+        "direction": direction,
+        "position_percent": position_percent,
+        "line_span_percent": line_span_percent,
+    }
+
+
 # ─── Auth ─────────────────────────────────────────────────────────────────────
 @app.post("/token", response_model=schemas.Token)
 async def login_for_access_token(form_data: OAuth2PasswordRequestForm = Depends(), db: Session = Depends(get_db)):
@@ -823,6 +898,36 @@ async def stop_session(session_id: str, db: Session = Depends(get_db)):
         v_engine.set_active_session(None)
 
     return db_session
+
+
+@app.delete("/api/sessions/{session_id}")
+async def delete_session(session_id: str, db: Session = Depends(get_db)):
+    db_session = db.query(models.Session).filter(models.Session.id == session_id).first()
+    if not db_session:
+        raise HTTPException(status_code=404, detail="Session not found")
+    if db_session.status == "active":
+        raise HTTPException(status_code=400, detail="Cannot delete active session")
+
+    db.query(models.DetectionLog).filter(models.DetectionLog.session_id == session_id).delete()
+    db.delete(db_session)
+    db.commit()
+    return {"deleted": 1, "session_id": session_id}
+
+
+@app.delete("/api/sessions/batch")
+async def delete_sessions_batch(payload: dict, db: Session = Depends(get_db)):
+    session_ids = payload.get("session_ids", [])
+    if not session_ids:
+        return {"deleted": 0}
+
+    active = db.query(models.Session).filter(models.Session.id.in_(session_ids), models.Session.status == "active").count()
+    if active > 0:
+        raise HTTPException(status_code=400, detail="Cannot delete active sessions")
+
+    db.query(models.DetectionLog).filter(models.DetectionLog.session_id.in_(session_ids)).delete(synchronize_session=False)
+    deleted = db.query(models.Session).filter(models.Session.id.in_(session_ids)).delete(synchronize_session=False)
+    db.commit()
+    return {"deleted": deleted}
 
 
 # ─── Entrypoint ───────────────────────────────────────────────────────────────

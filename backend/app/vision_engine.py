@@ -40,6 +40,12 @@ class VisionEngine:
         self.line_span_percent = 80
         self.counting_direction = "left-right"
 
+        self.camera_resolution = "720p"
+        self.camera_fps = 30
+        self.camera_brightness = 50
+        self.camera_contrast = 65
+        self.camera_autofocus = True
+
         self.model = None
         self.cap = None
         self.running = False
@@ -132,6 +138,7 @@ class VisionEngine:
             cap.set(cv2.CAP_PROP_BUFFERSIZE, 1)
             # Best effort low-latency hints (backend-dependent)
             cap.set(cv2.CAP_PROP_FPS, 30)
+            self._apply_capture_properties()
         else:
             print(f"ERREUR: _open_capture a échoué pour la source: {source}")
 
@@ -167,12 +174,15 @@ class VisionEngine:
                 print(f"ERREUR: Rechargement modèle échoué: {e}")
 
     def apply_virtual_line_config(self, position_percent=None, line_span_percent=None, direction=None):
-        if position_percent is not None:
-            self.line_y_percent = int(position_percent)
-        if line_span_percent is not None:
-            self.line_span_percent = int(line_span_percent)
         if direction is not None:
             self.counting_direction = direction
+        if position_percent is not None:
+            pos = int(position_percent)
+            self.line_y_percent = pos
+            if self.counting_direction in ("left-right", "right-left"):
+                self.line_x = int((pos / 100.0) * 1280)
+        if line_span_percent is not None:
+            self.line_span_percent = int(line_span_percent)
 
     def _crossed_virtual_line(self, track):
         if len(track) < 2:
@@ -192,6 +202,65 @@ class VisionEngine:
             line_y = int((self.line_y_percent / 100.0) * 720)
             return prev["y"] > line_y and curr["y"] <= line_y
         return prev["x"] < self.line_x and curr["x"] >= self.line_x
+
+
+    @staticmethod
+    def _resolution_to_wh(resolution: str):
+        mapping = {
+            "1080p": (1920, 1080),
+            "720p": (1280, 720),
+            "480p": (640, 480),
+        }
+        return mapping.get((resolution or "720p").lower(), (1280, 720))
+
+    def _apply_capture_properties(self):
+        if self.cap is None or not self.cap.isOpened():
+            return
+        try:
+            width, height = self._resolution_to_wh(self.camera_resolution)
+            self.cap.set(cv2.CAP_PROP_FRAME_WIDTH, width)
+            self.cap.set(cv2.CAP_PROP_FRAME_HEIGHT, height)
+            self.cap.set(cv2.CAP_PROP_FPS, float(self.camera_fps))
+            self.cap.set(cv2.CAP_PROP_BRIGHTNESS, float(self.camera_brightness) / 100.0)
+            self.cap.set(cv2.CAP_PROP_CONTRAST, float(self.camera_contrast) / 100.0)
+            self.cap.set(cv2.CAP_PROP_AUTOFOCUS, 1.0 if self.camera_autofocus else 0.0)
+        except Exception as e:
+            print(f"AVERTISSEMENT: Impossible d'appliquer certaines propriétés caméra: {e}")
+
+    def apply_camera_settings(self, resolution=None, fps=None, brightness=None, contrast=None, autofocus=None):
+        if resolution is not None:
+            self.camera_resolution = resolution
+        if fps is not None:
+            self.camera_fps = int(fps)
+        if brightness is not None:
+            self.camera_brightness = int(brightness)
+        if contrast is not None:
+            self.camera_contrast = int(contrast)
+        if autofocus is not None:
+            self.camera_autofocus = bool(autofocus)
+
+        # Try hot-apply
+        self._apply_capture_properties()
+
+    def get_runtime_info(self):
+        fps_val = 0.0
+        if self.cap is not None and self.cap.isOpened():
+            try:
+                fps_val = float(self.cap.get(cv2.CAP_PROP_FPS) or 0.0)
+            except Exception:
+                pass
+
+        return {
+            "camera_name": f"CAM_{self.video_source}",
+            "model": self.model_path,
+            "capture_fps": round(fps_val, 1),
+            "line": {
+                "type": "vertical" if self.counting_direction in ("left-right", "right-left") else "horizontal",
+                "direction": self.counting_direction,
+                "position_percent": self.line_y_percent if self.counting_direction in ("top-down", "bottom-up") else int((self.line_x / 1280) * 100),
+                "line_span_percent": self.line_span_percent,
+            }
+        }
 
     def start(self):
         if self.running:
@@ -349,16 +418,6 @@ class VisionEngine:
             now = time.monotonic()
             if now - last_broadcast >= frame_interval:
                 preview = frame.copy()
-                line_y = int((self.line_y_percent / 100.0) * preview.shape[0])
-                span_half = int((self.line_span_percent / 100.0) * preview.shape[1] / 2)
-                center_x = preview.shape[1] // 2
-                x_start = max(0, center_x - span_half)
-                x_end = min(preview.shape[1], center_x + span_half)
-
-                if self.counting_direction in ("left-right", "right-left"):
-                    cv2.line(preview, (self.line_x, 0), (self.line_x, preview.shape[0]), (0, 255, 255), 2)
-                else:
-                    cv2.line(preview, (x_start, line_y), (x_end, line_y), (0, 255, 255), 2)
                 self._broadcast_frame(preview)
                 last_broadcast = now
                 if frames_read <= 3:
@@ -457,17 +516,6 @@ class VisionEngine:
                     annotated_frame = self.last_annotated_frame.copy()
                 else:
                     annotated_frame = frame.copy()
-
-            line_y = int((self.line_y_percent / 100.0) * annotated_frame.shape[0])
-            span_half = int((self.line_span_percent / 100.0) * annotated_frame.shape[1] / 2)
-            center_x = annotated_frame.shape[1] // 2
-            x_start = max(0, center_x - span_half)
-            x_end = min(annotated_frame.shape[1], center_x + span_half)
-
-            if self.counting_direction in ("left-right", "right-left"):
-                cv2.line(annotated_frame, (self.line_x, 0), (self.line_x, annotated_frame.shape[0]), (0, 255, 255), 2)
-            else:
-                cv2.line(annotated_frame, (x_start, line_y), (x_end, line_y), (0, 255, 255), 2)
 
             with self.frame_lock:
                 self.annotated_frame = annotated_frame
