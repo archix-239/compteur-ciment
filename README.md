@@ -166,6 +166,7 @@ WebSocket /ws/video → Frontend (useVideoStream hook) → <img> element
 - Le backend applique les propriétés OpenCV matérielles (`FRAME_WIDTH/HEIGHT`, `FPS`, `BRIGHTNESS`, `CONTRAST`, `AUTOFOCUS`) **et** un post-processing logiciel garanti dans la boucle vision (`resize` + `convertScaleAbs`).
 - Pour les fichiers vidéo, le FPS demandé est respecté via régulation temporelle (`sleep`) côté boucle de lecture.
 - Lors d'une sauvegarde caméra, le flux est redémarré proprement pour les sources qui ne supportent pas le hot-apply.
+- Stabilisation RTSP Windows: arrêt/redémarrage protégé (pas de second thread si stop incomplet), restart caméra uniquement quand la source change, et test caméra sans pause forcée du moteur pour les flux RTSP afin d'éviter les timeouts/assertions FFMPEG.
 
 ### Correctif 2 — Ligne virtuelle directionnelle + visualisation réelle
 - Nouveaux endpoints `GET/PUT /api/config/line` avec `type` (`horizontal`/`vertical`) et `direction` (`top-down`, `bottom-up`, `left-right`, `right-left`) + cohérence forcée type/direction.

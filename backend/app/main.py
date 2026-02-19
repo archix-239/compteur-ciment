@@ -568,7 +568,7 @@ async def update_camera_config(config: schemas.CameraConfig, db: Session = Depen
     if source_changed:
         v_engine.video_source = new_source
 
-    # Apply OpenCV camera properties (width/height/fps/brightness/contrast/autofocus)
+    # Apply settings (hardware + software post-processing parameters)
     v_engine.apply_camera_settings(
         resolution=config.resolution,
         fps=config.fps,
@@ -577,10 +577,10 @@ async def update_camera_config(config: schemas.CameraConfig, db: Session = Depen
         autofocus=config.autofocus,
     )
 
-    # Some cameras cannot apply at runtime -> restart stream cleanly
-    if v_engine.running:
-        v_engine.stop()
-        v_engine.start()
+    # Restart only when source changes (avoid unnecessary RTSP reconnect storms)
+    if v_engine.running and source_changed:
+        if v_engine.stop():
+            v_engine.start()
 
     return config
 
@@ -622,13 +622,14 @@ def _test_camera_sync(config: schemas.CameraConfig) -> dict:
     else:
         source = config.url
 
-    # Check if we need to pause the vision engine (same source conflict)
+    # Check if we need to pause the vision engine (same webcam source conflict only)
     v_engine = vision_engine.get_vision_engine()
     engine_was_running = False
-    if v_engine.running and v_engine.video_source == source:
-        print(f"INFO: Pause du moteur de vision pour test caméra (source: {source})")
-        v_engine.stop()
-        engine_was_running = True
+    same_source = v_engine.running and v_engine.video_source == source
+    is_webcam_source = isinstance(source, int) or (isinstance(source, str) and source.isdigit())
+    if same_source and is_webcam_source:
+        print(f"INFO: Pause du moteur de vision pour test caméra (source webcam: {source})")
+        engine_was_running = v_engine.stop()
 
     cap = None
     try:

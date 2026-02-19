@@ -116,7 +116,7 @@ class VisionEngine:
             # RTSP: use FFMPEG backend with TCP transport for reliability
             os.environ["OPENCV_FFMPEG_CAPTURE_OPTIONS"] = (
                 "rtsp_transport;tcp|fflags;nobuffer|flags;low_delay|"
-                "max_delay;0|analyzeduration;0|probesize;32768"
+                "max_delay;5000000|analyzeduration;1000000|probesize;32768|stimeout;5000000"
             )
             cap = cv2.VideoCapture(source, cv2.CAP_FFMPEG)
         elif isinstance(source, str) and (source.startswith("http://") or source.startswith("https://")):
@@ -265,6 +265,9 @@ class VisionEngine:
     def start(self):
         if self.running:
             return
+        if self.thread and self.thread.is_alive():
+            print("AVERTISSEMENT: Start ignoré, thread vision déjà actif")
+            return
 
         print(f"INFO: Démarrage du moteur de vision (Source: {self.video_source}, Platform: {sys.platform})...")
 
@@ -291,18 +294,14 @@ class VisionEngine:
         self.thread.start()
 
     def stop(self):
-        if not self.running:
-            return
+        if not self.running and not (self.thread and self.thread.is_alive()):
+            return True
 
         print("INFO: Arrêt du moteur de vision...")
         self.running = False
         self._stop_event.set()
 
-        if self.thread and self.thread.is_alive():
-            self.thread.join(timeout=5)
-            if self.thread.is_alive():
-                print("AVERTISSEMENT: Le thread vision ne s'est pas arrêté dans le délai.")
-
+        # Release capture first to unblock potential blocking read()
         if self.cap:
             try:
                 self.cap.release()
@@ -310,9 +309,20 @@ class VisionEngine:
                 pass
             self.cap = None
 
+        stopped = True
+        if self.thread and self.thread.is_alive():
+            self.thread.join(timeout=8)
+            if self.thread.is_alive():
+                stopped = False
+                print("ERREUR: Le thread vision ne s'est pas arrêté; restart annulé pour éviter conflit FFMPEG.")
+
+        if stopped:
+            self.thread = None
+
         self.annotated_frame = None
         self.latest_frame = None
         print("INFO: Moteur de vision arrêté.")
+        return stopped
 
     def _broadcast_frame(self, frame):
         """Encode frame and send to all WebSocket subscribers."""
