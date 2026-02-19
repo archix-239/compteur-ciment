@@ -3,8 +3,9 @@ from fastapi.middleware.cors import CORSMiddleware
 from fastapi.security import OAuth2PasswordRequestForm
 from fastapi.staticfiles import StaticFiles
 from sqlalchemy.orm import Session
+from sqlalchemy import func
 from contextlib import asynccontextmanager
-from datetime import timedelta
+from datetime import timedelta, datetime
 import cv2
 import json
 import asyncio
@@ -112,7 +113,11 @@ async def lifespan(app: FastAPI):
     db = SessionLocal()
     try:
         settings = db.query(models.SystemSetting).filter(
-            models.SystemSetting.key.in_(["camera_source_type", "camera_url"])
+            models.SystemSetting.key.in_([
+                "camera_source_type", "camera_url", "camera_resolution", "camera_fps", "camera_brightness", "camera_contrast", "camera_autofocus",
+                "detection_model_path", "detection_threshold", "detection_nms_iou", "detection_max_det", "detection_imgsz", "tracking_persistence",
+                "virtual_line_x", "virtual_line_y_percent", "virtual_line_span_percent", "virtual_line_direction"
+            ])
         ).all()
         config = {s.key: s.value for s in settings}
         source_type = config.get("camera_source_type", "webcam")
@@ -123,6 +128,30 @@ async def lifespan(app: FastAPI):
             v_engine.video_source = int(url) if url.isdigit() else 0
         else:
             v_engine.video_source = url
+
+        v_engine.apply_camera_settings(
+            resolution=config.get("camera_resolution", "720p"),
+            fps=int(config.get("camera_fps", "30")),
+            brightness=int(config.get("camera_brightness", "50")),
+            contrast=int(config.get("camera_contrast", "65")),
+            autofocus=config.get("camera_autofocus", "true").lower() == "true",
+        )
+
+        v_engine.apply_model_config(
+            model_path=config.get("detection_model_path", "models/best_V5.pt"),
+            confidence_threshold=float(config.get("detection_threshold", "0.7")),
+            nms_iou_threshold=float(config.get("detection_nms_iou", "0.45")),
+            max_detections=int(config.get("detection_max_det", "100")),
+            inference_size=int(config.get("detection_imgsz", "1280")),
+            tracking_persistence=config.get("tracking_persistence", "true").lower() == "true",
+        )
+        v_engine.apply_virtual_line_config(
+            position_percent=int(config.get("virtual_line_y_percent", "60")),
+            line_span_percent=int(config.get("virtual_line_span_percent", "80")),
+            direction=config.get("virtual_line_direction", "left-right"),
+        )
+        if "virtual_line_x" in config:
+            v_engine.line_x = int(config.get("virtual_line_x", "640"))
 
         v_engine.set_on_count_callback(handle_vision_event)
         v_engine.start()
@@ -222,6 +251,23 @@ async def websocket_endpoint(websocket: WebSocket):
         manager.disconnect(websocket)
 
 
+def _recompute_session_counters(db: Session, session_id: str):
+    session = db.query(models.Session).filter(models.Session.id == session_id).first()
+    if not session:
+        return
+    total_conforme = db.query(models.DetectionLog).filter(
+        models.DetectionLog.session_id == session_id,
+        models.DetectionLog.status == "conforme"
+    ).count()
+    total_rejete = db.query(models.DetectionLog).filter(
+        models.DetectionLog.session_id == session_id,
+        models.DetectionLog.status == "rejete"
+    ).count()
+    session.total_count = total_conforme
+    session.rejected_count = total_rejete
+
+
+
 # ─── Dashboard ────────────────────────────────────────────────────────────────
 @app.get("/api/dashboard/summary")
 async def get_dashboard_summary(db: Session = Depends(get_db)):
@@ -240,10 +286,35 @@ async def get_dashboard_summary(db: Session = Depends(get_db)):
 
 
 # ─── Logs ─────────────────────────────────────────────────────────────────────
-@app.get("/api/logs/", response_model=List[schemas.DetectionLog])
-async def get_logs(skip: int = 0, limit: int = 100, db: Session = Depends(get_db)):
-    logs = db.query(models.DetectionLog).order_by(models.DetectionLog.timestamp.desc()).offset(skip).limit(limit).all()
-    return logs
+@app.get("/api/logs/", response_model=schemas.DetectionLogListResponse)
+async def get_logs(
+    page: int = 1,
+    page_size: int = 20,
+    status: str | None = None,
+    session_id: str | None = None,
+    search: str | None = None,
+    db: Session = Depends(get_db),
+):
+    page = max(page, 1)
+    page_size = min(max(page_size, 1), 100)
+
+    query = db.query(models.DetectionLog)
+    if status:
+        mapped_status = "conforme" if status.lower() in ["verifie", "vérifié", "conforme"] else "rejete" if status.lower() in ["rejete", "rejeté"] else status
+        query = query.filter(models.DetectionLog.status == mapped_status)
+    if session_id:
+        query = query.filter(models.DetectionLog.session_id == session_id)
+    if search:
+        query = query.filter(models.DetectionLog.identifier.ilike(f"%{search}%"))
+
+    total = query.count()
+    logs = query.order_by(models.DetectionLog.timestamp.desc()).offset((page - 1) * page_size).limit(page_size).all()
+    return {
+        "items": logs,
+        "total": total,
+        "page": page,
+        "page_size": page_size,
+    }
 
 
 # ─── Users ────────────────────────────────────────────────────────────────────
@@ -287,19 +358,163 @@ async def get_performance_analytics(db: Session = Depends(get_db)):
 
 
 # ─── Quality ──────────────────────────────────────────────────────────────────
-@app.get("/api/quality/summary")
+@app.get("/api/quality/summary", response_model=schemas.QualityDashboardResponse)
 async def get_quality_summary(db: Session = Depends(get_db)):
-    total = db.query(models.DetectionLog).count()
-    rejected = db.query(models.DetectionLog).filter(models.DetectionLog.status == "rejete").count()
+    logs = db.query(models.DetectionLog).all()
+    total = len(logs)
+    rejected = len([l for l in logs if l.status == "rejete"])
     rejection_rate = (rejected / total * 100) if total > 0 else 0
+
+    avg_logo = sum((l.logo_score or 0) for l in logs) / total if total else 0
+    avg_color = sum((l.color_score or 0) for l in logs) / total if total else 0
+    avg_detect = sum((l.detection_score or 0) for l in logs) / total if total else 0
+
+    bins = {"0-20%": 0, "20-40%": 0, "40-60%": 0, "60-80%": 0, "80-100%": 0}
+    for l in logs:
+        v = (l.detection_score or 0) * 100
+        if v < 20:
+            bins["0-20%"] += 1
+        elif v < 40:
+            bins["20-40%"] += 1
+        elif v < 60:
+            bins["40-60%"] += 1
+        elif v < 80:
+            bins["60-80%"] += 1
+        else:
+            bins["80-100%"] += 1
+
+    logo_conforme = len([l for l in logs if (l.logo_score or 0) >= 0.8])
+    logo_flou = len([l for l in logs if 0.5 <= (l.logo_score or 0) < 0.8])
+    logo_absent = len([l for l in logs if (l.logo_score or 0) < 0.5])
+    reviews_count = db.query(models.QualityReview).count()
+    recent_errors = db.query(models.DetectionLog).filter(
+        models.DetectionLog.status == "rejete",
+        models.DetectionLog.timestamp >= (datetime.utcnow() - timedelta(hours=24))
+    ).count()
 
     return {
         "totalInspected": total,
         "rejectedCount": rejected,
         "rejectionRate": rejection_rate,
-        "avgLogoScore": 0.92,
-        "avgColorScore": 0.88
+        "avgLogoScore": avg_logo,
+        "avgColorScore": avg_color,
+        "avgDetectionScore": avg_detect,
+        "confidenceDistribution": [{"range": k, "count": v} for k, v in bins.items()],
+        "logoDistribution": [
+            {"name": "Logo Conforme", "value": logo_conforme, "color": "#f97316"},
+            {"name": "Logo Flou", "value": logo_flou, "color": "#eab308"},
+            {"name": "Sans Logo", "value": logo_absent, "color": "#ef4444"},
+        ],
+        "recentErrors": recent_errors,
+        "reviewedCorrections": reviews_count,
     }
+
+
+@app.get("/api/quality/manual-verification", response_model=schemas.ManualVerificationResponse)
+async def get_manual_verification_queue(
+    page: int = 1,
+    page_size: int = 20,
+    search: str | None = None,
+    db: Session = Depends(get_db),
+):
+    page = max(page, 1)
+    page_size = min(max(page_size, 1), 100)
+
+    reviewed_ids = [r[0] for r in db.query(models.QualityReview.log_id).all()]
+
+    query = db.query(models.DetectionLog).filter(
+        (models.DetectionLog.status == "rejete") |
+        (models.DetectionLog.detection_score < 0.6)
+    )
+    if reviewed_ids:
+        query = query.filter(~models.DetectionLog.id.in_(reviewed_ids))
+    if search:
+        query = query.filter(models.DetectionLog.identifier.ilike(f"%{search}%"))
+
+    total = query.count()
+    items = query.order_by(models.DetectionLog.timestamp.desc()).offset((page - 1) * page_size).limit(page_size).all()
+
+    mapped = []
+    for l in items:
+        reason = "Non conforme" if l.status == "rejete" else "Confiance faible"
+        mapped.append({
+            "id": l.id,
+            "timestamp": l.timestamp,
+            "session_id": l.session_id,
+            "identifier": l.identifier,
+            "detection_score": l.detection_score,
+            "logo_score": l.logo_score,
+            "color_score": l.color_score,
+            "interval": l.interval,
+            "capture_url": l.capture_url,
+            "status": l.status,
+            "reason": reason,
+            "reviewed": False,
+        })
+    return {"items": mapped, "total": total}
+
+
+@app.get("/api/quality/reviews", response_model=list[schemas.QualityReview])
+async def get_quality_reviews(limit: int = 50, db: Session = Depends(get_db)):
+    return db.query(models.QualityReview).order_by(models.QualityReview.created_at.desc()).limit(limit).all()
+
+
+@app.get("/api/quality/anomalies", response_model=schemas.QualityAnomalyResponse)
+async def get_quality_anomalies(limit: int = 50, db: Session = Depends(get_db)):
+    logs = db.query(models.DetectionLog).order_by(models.DetectionLog.timestamp.desc()).limit(limit).all()
+    items = []
+    for l in logs:
+        is_low_conf = (l.detection_score or 0) < 0.6
+        is_reject = l.status == "rejete"
+        if not is_low_conf and not is_reject:
+            continue
+        severity = "high" if (l.detection_score or 0) < 0.5 or is_reject else "medium"
+        items.append({
+            "id": f"AN-{l.id}",
+            "type": "Sac rejeté" if is_reject else "Confiance faible",
+            "time": l.timestamp.strftime("%H:%M:%S"),
+            "severity": severity,
+            "description": f"Score détection {l.detection_score:.2f}, logo {l.logo_score:.2f}, couleur {l.color_score:.2f}",
+            "thumbnail": f"/static/captures/{l.capture_url.split('/')[-1]}" if l.capture_url else None,
+            "status": "pending",
+        })
+    return {"items": items, "total": len(items)}
+
+
+@app.patch("/api/logs/{log_id}", response_model=schemas.DetectionLog)
+async def review_log(log_id: int, payload: schemas.UpdateLogRequest, db: Session = Depends(get_db)):
+    log = db.query(models.DetectionLog).filter(models.DetectionLog.id == log_id).first()
+    if not log:
+        raise HTTPException(status_code=404, detail="Log not found")
+
+    original_status = log.status
+
+    action = payload.action.lower()
+    if action in ["validate", "valider", "correct"]:
+        log.status = payload.target_status or "conforme"
+    elif action in ["reject", "rejeter"]:
+        log.status = payload.target_status or "rejete"
+    elif action in ["ignore", "ignorer"]:
+        pass
+
+    if payload.corrected_identifier:
+        log.identifier = payload.corrected_identifier
+
+    review = models.QualityReview(
+        log_id=log.id,
+        action=payload.action,
+        target_status=log.status,
+        notes=payload.notes,
+        reviewer=payload.reviewer,
+    )
+    db.add(review)
+
+    if original_status != log.status:
+        _recompute_session_counters(db, log.session_id)
+
+    db.commit()
+    db.refresh(log)
+    return log
 
 
 # ─── Camera Configuration ────────────────────────────────────────────────────
@@ -342,17 +557,29 @@ async def update_camera_config(config: schemas.CameraConfig, db: Session = Depen
             db.add(models.SystemSetting(key=key, value=value))
     db.commit()
 
-    # Determine new video source
+    # Determine new video source and apply camera settings in runtime
     v_engine = vision_engine.get_vision_engine()
     if config.source_type == "webcam":
         new_source = int(config.url) if config.url.isdigit() else 0
     else:
         new_source = config.url
 
-    if v_engine.video_source != new_source:
+    source_changed = v_engine.video_source != new_source
+    if source_changed:
         v_engine.video_source = new_source
-        if v_engine.running:
-            v_engine.stop()
+
+    # Apply settings (hardware + software post-processing parameters)
+    v_engine.apply_camera_settings(
+        resolution=config.resolution,
+        fps=config.fps,
+        brightness=config.brightness,
+        contrast=config.contrast,
+        autofocus=config.autofocus,
+    )
+
+    # Restart only when source changes (avoid unnecessary RTSP reconnect storms)
+    if v_engine.running and source_changed:
+        if v_engine.stop():
             v_engine.start()
 
     return config
@@ -363,6 +590,22 @@ async def test_camera_connection(config: schemas.CameraConfig):
     loop = asyncio.get_event_loop()
     result = await loop.run_in_executor(None, _test_camera_sync, config)
     return result
+
+
+@app.get("/api/config/runtime")
+async def get_runtime_config(db: Session = Depends(get_db)):
+    v_engine = vision_engine.get_vision_engine()
+    settings = db.query(models.SystemSetting).filter(
+        models.SystemSetting.key.in_(["camera_url", "detection_model_path"])
+    ).all()
+    cfg = {s.key: s.value for s in settings}
+    runtime = v_engine.get_runtime_info()
+    return {
+        "camera_name": runtime.get("camera_name", f"CAM_{cfg.get('camera_url', '0')}"),
+        "model": cfg.get("detection_model_path", runtime.get("model", "models/best_V5.pt")),
+        "capture_fps": runtime.get("capture_fps", 0),
+        "line": runtime.get("line", {}),
+    }
 
 
 def _test_camera_sync(config: schemas.CameraConfig) -> dict:
@@ -379,13 +622,14 @@ def _test_camera_sync(config: schemas.CameraConfig) -> dict:
     else:
         source = config.url
 
-    # Check if we need to pause the vision engine (same source conflict)
+    # Check if we need to pause the vision engine (same webcam source conflict only)
     v_engine = vision_engine.get_vision_engine()
     engine_was_running = False
-    if v_engine.running and v_engine.video_source == source:
-        print(f"INFO: Pause du moteur de vision pour test caméra (source: {source})")
-        v_engine.stop()
-        engine_was_running = True
+    same_source = v_engine.running and v_engine.video_source == source
+    is_webcam_source = isinstance(source, int) or (isinstance(source, str) and source.isdigit())
+    if same_source and is_webcam_source:
+        print(f"INFO: Pause du moteur de vision pour test caméra (source webcam: {source})")
+        engine_was_running = v_engine.stop()
 
     cap = None
     try:
@@ -434,6 +678,137 @@ def _test_camera_sync(config: schemas.CameraConfig) -> dict:
             v_engine.start()
 
 
+# ─── IA Model Configuration ──────────────────────────────────────────────────
+@app.get("/api/config/model", response_model=schemas.ModelConfig)
+async def get_model_config(db: Session = Depends(get_db)):
+    settings = db.query(models.SystemSetting).filter(
+        models.SystemSetting.key.in_([
+            "detection_model_path", "detection_threshold", "detection_nms_iou",
+            "detection_max_det", "detection_imgsz", "tracking_persistence"
+        ])
+    ).all()
+    config = {s.key: s.value for s in settings}
+
+    return schemas.ModelConfig(
+        selected_model=config.get("detection_model_path", "models/best_V5.pt"),
+        confidence_threshold=float(config.get("detection_threshold", "0.7")),
+        nms_iou_threshold=float(config.get("detection_nms_iou", "0.45")),
+        max_detections=int(config.get("detection_max_det", "100")),
+        inference_size=int(config.get("detection_imgsz", "1280")),
+        tracking_persistence=config.get("tracking_persistence", "true").lower() == "true",
+    )
+
+
+@app.put("/api/config/model", response_model=schemas.ModelConfig)
+async def update_model_config(config: schemas.ModelConfig, db: Session = Depends(get_db)):
+    mapping = {
+        "detection_model_path": config.selected_model,
+        "detection_threshold": str(config.confidence_threshold),
+        "detection_nms_iou": str(config.nms_iou_threshold),
+        "detection_max_det": str(config.max_detections),
+        "detection_imgsz": str(config.inference_size),
+        "tracking_persistence": str(config.tracking_persistence).lower(),
+    }
+    for key, value in mapping.items():
+        setting = db.query(models.SystemSetting).filter(models.SystemSetting.key == key).first()
+        if setting:
+            setting.value = value
+        else:
+            db.add(models.SystemSetting(key=key, value=value))
+    db.commit()
+
+    v_engine = vision_engine.get_vision_engine()
+    v_engine.apply_model_config(
+        model_path=config.selected_model,
+        confidence_threshold=config.confidence_threshold,
+        nms_iou_threshold=config.nms_iou_threshold,
+        max_detections=config.max_detections,
+        inference_size=config.inference_size,
+        tracking_persistence=config.tracking_persistence,
+    )
+    return config
+
+
+# ─── Virtual Line Configuration ──────────────────────────────────────────────
+@app.get("/api/config/virtual-line", response_model=schemas.VirtualLineConfig)
+async def get_virtual_line_config(db: Session = Depends(get_db)):
+    settings = db.query(models.SystemSetting).filter(
+        models.SystemSetting.key.in_([
+            "virtual_line_y_percent", "virtual_line_span_percent", "virtual_line_direction"
+        ])
+    ).all()
+    config = {s.key: s.value for s in settings}
+
+    return schemas.VirtualLineConfig(
+        position_percent=int(config.get("virtual_line_y_percent", "60")),
+        line_span_percent=int(config.get("virtual_line_span_percent", "80")),
+        direction=config.get("virtual_line_direction", "left-right"),
+    )
+
+
+@app.put("/api/config/virtual-line", response_model=schemas.VirtualLineConfig)
+async def update_virtual_line_config(config: schemas.VirtualLineConfig, db: Session = Depends(get_db)):
+    mapping = {
+        "virtual_line_y_percent": str(config.position_percent),
+        "virtual_line_span_percent": str(config.line_span_percent),
+        "virtual_line_direction": config.direction,
+    }
+    for key, value in mapping.items():
+        setting = db.query(models.SystemSetting).filter(models.SystemSetting.key == key).first()
+        if setting:
+            setting.value = value
+        else:
+            db.add(models.SystemSetting(key=key, value=value))
+    db.commit()
+
+    v_engine = vision_engine.get_vision_engine()
+    v_engine.apply_virtual_line_config(
+        position_percent=config.position_percent,
+        line_span_percent=config.line_span_percent,
+        direction=config.direction,
+    )
+    return config
+
+
+@app.get("/api/config/line")
+async def get_line_config(db: Session = Depends(get_db)):
+    cfg = await get_virtual_line_config(db)
+    line_type = "vertical" if cfg.direction in ["left-right", "right-left"] else "horizontal"
+    return {
+        "type": line_type,
+        "direction": cfg.direction,
+        "position_percent": cfg.position_percent,
+        "line_span_percent": cfg.line_span_percent,
+    }
+
+
+@app.put("/api/config/line")
+async def update_line_config(payload: dict, db: Session = Depends(get_db)):
+    direction = payload.get("direction", "left-right")
+    line_type = payload.get("type")
+    position_percent = int(payload.get("position_percent", 60))
+    line_span_percent = int(payload.get("line_span_percent", 80))
+
+    # Force coherence between type and direction
+    if direction in ["top-down", "bottom-up"]:
+        line_type = "horizontal"
+    elif direction in ["left-right", "right-left"]:
+        line_type = "vertical"
+
+    cfg = schemas.VirtualLineConfig(
+        position_percent=position_percent,
+        line_span_percent=line_span_percent,
+        direction=direction,
+    )
+    await update_virtual_line_config(cfg, db)
+    return {
+        "type": line_type,
+        "direction": direction,
+        "position_percent": position_percent,
+        "line_span_percent": line_span_percent,
+    }
+
+
 # ─── Auth ─────────────────────────────────────────────────────────────────────
 @app.post("/token", response_model=schemas.Token)
 async def login_for_access_token(form_data: OAuth2PasswordRequestForm = Depends(), db: Session = Depends(get_db)):
@@ -457,16 +832,43 @@ async def read_users_me(current_user: models.User = Depends(auth.get_current_use
 
 
 # ─── Sessions ─────────────────────────────────────────────────────────────────
-@app.get("/sessions/", response_model=list[schemas.Session])
-async def read_sessions(skip: int = 0, limit: int = 100, db: Session = Depends(get_db)):
-    sessions = db.query(models.Session).offset(skip).limit(limit).all()
-    return sessions
+@app.get("/sessions/active", response_model=schemas.Session | None)
+async def read_active_session(db: Session = Depends(get_db)):
+    return db.query(models.Session).filter(models.Session.status == "active").order_by(models.Session.start_time.desc()).first()
+
+
+@app.get("/sessions/", response_model=schemas.SessionListResponse)
+async def read_sessions(
+    page: int = 1,
+    page_size: int = 20,
+    status: str | None = None,
+    db: Session = Depends(get_db),
+):
+    page = max(page, 1)
+    page_size = min(max(page_size, 1), 100)
+
+    query = db.query(models.Session)
+    if status:
+        query = query.filter(models.Session.status == status)
+
+    total = query.count()
+    items = query.order_by(models.Session.start_time.desc()).offset((page - 1) * page_size).limit(page_size).all()
+    active = db.query(models.Session).filter(models.Session.status == "active").first()
+    return {
+        "items": items,
+        "total": total,
+        "active_session_id": active.id if active else None,
+    }
 
 
 @app.post("/sessions/start", response_model=schemas.Session)
 async def start_session(db: Session = Depends(get_db)):
     import datetime
-    session_id = f"S-{datetime.datetime.now().strftime('%Y%m%d-%H%M')}"
+    active = db.query(models.Session).filter(models.Session.status == "active").first()
+    if active:
+        return active
+
+    session_id = f"S-{datetime.datetime.now().strftime('%Y%m%d-%H%M%S')}"
     db_session = models.Session(id=session_id)
     db.add(db_session)
     db.commit()
@@ -484,6 +886,9 @@ async def stop_session(session_id: str, db: Session = Depends(get_db)):
     db_session = db.query(models.Session).filter(models.Session.id == session_id).first()
     if not db_session:
         raise HTTPException(status_code=404, detail="Session not found")
+    if db_session.status != "active":
+        return db_session
+
     db_session.end_time = datetime.datetime.utcnow()
     db_session.status = "completed"
     db.commit()
@@ -494,6 +899,36 @@ async def stop_session(session_id: str, db: Session = Depends(get_db)):
         v_engine.set_active_session(None)
 
     return db_session
+
+
+@app.delete("/api/sessions/{session_id}")
+async def delete_session(session_id: str, db: Session = Depends(get_db)):
+    db_session = db.query(models.Session).filter(models.Session.id == session_id).first()
+    if not db_session:
+        raise HTTPException(status_code=404, detail="Session not found")
+    if db_session.status == "active":
+        raise HTTPException(status_code=400, detail="Cannot delete active session")
+
+    db.query(models.DetectionLog).filter(models.DetectionLog.session_id == session_id).delete()
+    db.delete(db_session)
+    db.commit()
+    return {"deleted": 1, "session_id": session_id}
+
+
+@app.delete("/api/sessions/batch")
+async def delete_sessions_batch(payload: dict, db: Session = Depends(get_db)):
+    session_ids = payload.get("session_ids", [])
+    if not session_ids:
+        return {"deleted": 0}
+
+    active = db.query(models.Session).filter(models.Session.id.in_(session_ids), models.Session.status == "active").count()
+    if active > 0:
+        raise HTTPException(status_code=400, detail="Cannot delete active sessions")
+
+    db.query(models.DetectionLog).filter(models.DetectionLog.session_id.in_(session_ids)).delete(synchronize_session=False)
+    deleted = db.query(models.Session).filter(models.Session.id.in_(session_ids)).delete(synchronize_session=False)
+    db.commit()
+    return {"deleted": deleted}
 
 
 # ─── Entrypoint ───────────────────────────────────────────────────────────────

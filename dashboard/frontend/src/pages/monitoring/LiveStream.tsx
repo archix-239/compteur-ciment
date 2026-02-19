@@ -7,30 +7,77 @@ import { Button } from '@/components/ui/button';
 import { PageHeader } from '@/components/PageHeader';
 import { StatusBadge } from '@/components/StatusBadge';
 
+interface RuntimeInfo {
+  camera_name: string;
+  model: string;
+  capture_fps: number;
+  line?: {
+    type: 'horizontal' | 'vertical';
+    direction: 'top-down' | 'bottom-up' | 'left-right' | 'right-left';
+    position_percent: number;
+    line_span_percent: number;
+  };
+}
+
 export default function LiveStream() {
   const imgRef = useRef<HTMLImageElement>(null);
   const { status: streamStatus, fps, reconnect } = useVideoStream(imgRef, true);
 
+  const [runtime, setRuntime] = useState<RuntimeInfo | null>(null);
   const [stats, setStats] = useState({
+    latency: 0,
     detectedObjects: 0,
     verifiedBags: 0,
-    rejectedBags: 0
+    rejectedBags: 0,
+    activeSessionStart: '-',
+    activeSessionDuration: '-',
+    activeRate: 0,
   });
 
   useEffect(() => {
-    // Initial fetch for stats
     fetch(`${API_URL}/api/dashboard/summary`)
       .then(res => res.json())
       .then(data => {
-        setStats(prev => ({
-          ...prev,
-          verifiedBags: data.totalBags,
-          rejectedBags: data.rejectedBags
-        }));
+        setStats(prev => ({ ...prev, verifiedBags: data.totalBags, rejectedBags: data.rejectedBags }));
       })
       .catch(() => {});
 
-    // WebSocket for live count updates
+    const loadRuntime = () => {
+      fetch(`${API_URL}/api/config/runtime`)
+        .then((r) => r.json())
+        .then(setRuntime)
+        .catch(() => {});
+    };
+    loadRuntime();
+    const runtimeTimer = setInterval(loadRuntime, 3000);
+
+    const loadSession = () => {
+      fetch(`${API_URL}/sessions/active`)
+        .then((r) => r.json())
+        .then((s) => {
+          if (!s) {
+            setStats((prev) => ({ ...prev, activeSessionStart: '-', activeSessionDuration: '-', activeRate: 0 }));
+            return;
+          }
+          const start = new Date(s.start_time);
+          const diffSec = Math.max(0, Math.floor((Date.now() - start.getTime()) / 1000));
+          const hh = String(Math.floor(diffSec / 3600)).padStart(2, '0');
+          const mm = String(Math.floor((diffSec % 3600) / 60)).padStart(2, '0');
+          const ss = String(diffSec % 60).padStart(2, '0');
+          const total = (s.total_count || 0) + (s.rejected_count || 0);
+          const mins = Math.max(1, diffSec / 60);
+          setStats((prev) => ({
+            ...prev,
+            activeSessionStart: start.toLocaleTimeString(),
+            activeSessionDuration: `${hh}:${mm}:${ss}`,
+            activeRate: Number((total / mins).toFixed(1)),
+          }));
+        })
+        .catch(() => {});
+    };
+    loadSession();
+    const sessionTimer = setInterval(loadSession, 1000);
+
     const ws = new WebSocket(WS_URL);
     ws.onmessage = (event) => {
       const message = JSON.parse(event.data);
@@ -39,13 +86,20 @@ export default function LiveStream() {
         setStats(prev => ({
           ...prev,
           verifiedBags: eventData.session_stats.total,
-          rejectedBags: eventData.session_stats.rejected
+          rejectedBags: eventData.session_stats.rejected,
+          detectedObjects: (prev.detectedObjects + 1),
         }));
       }
     };
 
-    return () => ws.close();
+    return () => {
+      ws.close();
+      clearInterval(runtimeTimer);
+      clearInterval(sessionTimer);
+    };
   }, []);
+
+  const line = runtime?.line;
 
   return (
     <div className="p-6 space-y-6">
@@ -66,33 +120,33 @@ export default function LiveStream() {
       <div className="grid grid-cols-1 lg:grid-cols-4 gap-6">
         <div className="lg:col-span-3 space-y-4">
           <Card className="relative aspect-video bg-black overflow-hidden border-orange-500/20 group">
-            {/* Flux vidéo via WebSocket */}
             <img
               ref={imgRef}
               alt="Live Stream"
               className="absolute inset-0 w-full h-full object-contain"
               style={{ display: streamStatus === 'online' ? 'block' : 'none' }}
             />
+            <div className="absolute inset-0 flex items-center justify-center text-orange-500/20 pointer-events-none">
+              {streamStatus !== 'online' && <Camera className="w-20 h-20 opacity-20" />}
+            </div>
 
-            {/* Placeholder quand offline */}
-            {streamStatus !== 'online' && (
-              <div className="absolute inset-0 flex items-center justify-center text-orange-500/20 pointer-events-none">
-                <Camera className="w-20 h-20 opacity-20" />
+            {/* Ligne Virtuelle (React source de vérité) */}
+            {line?.type === 'vertical' && (
+              <div className="absolute inset-y-0 w-0.5 bg-yellow-400/50 shadow-[0_0_10px_rgba(250,204,21,0.5)]" style={{ left: `${line.position_percent}%` }}>
+                <div className="absolute top-4 -translate-x-1/2 bg-yellow-400 text-black text-[10px] font-bold px-1 rounded">LIGNE DE COMPTAGE</div>
               </div>
             )}
-
-            {/* Ligne Virtuelle */}
-            <div className="absolute inset-y-0 left-1/2 w-0.5 bg-yellow-400/50 shadow-[0_0_10px_rgba(250,204,21,0.5)]">
-              <div className="absolute top-4 -translate-x-1/2 bg-yellow-400 text-black text-[10px] font-bold px-1 rounded">
-                LIGNE DE COMPTAGE
+            {line?.type === 'horizontal' && (
+              <div className="absolute inset-x-0 h-0.5 bg-yellow-400/50 shadow-[0_0_10px_rgba(250,204,21,0.5)]" style={{ top: `${line.position_percent}%` }}>
+                <div className="absolute left-4 -translate-y-1/2 bg-yellow-400 text-black text-[10px] font-bold px-1 rounded">LIGNE DE COMPTAGE</div>
               </div>
-            </div>
+            )}
 
             {/* Infos Caméra */}
             <div className="absolute top-4 left-4 flex flex-col gap-2">
               <div className="bg-black/60 backdrop-blur-md border border-white/10 p-2 rounded text-[10px] font-mono">
-                <div className="text-orange-400">CAM_01 // CONVOYEUR_FRONTAL</div>
-                <div className="text-white/60">1280x720 @ {fps} FPS</div>
+                <div className="text-orange-400">{runtime?.camera_name || 'CAM_01 // CONVOYEUR_FRONTAL'}</div>
+                <div className="text-white/60">Capture {runtime?.capture_fps ?? 0} FPS · Stream {fps} FPS</div>
               </div>
             </div>
 
@@ -100,15 +154,13 @@ export default function LiveStream() {
             <div className="absolute top-4 right-4 bg-black/60 backdrop-blur-md border border-white/10 p-3 rounded">
               <div className="flex items-center gap-4 text-xs font-mono">
                 <div>
-                  <div className="text-white/40 mb-1 text-[8px]">FPS</div>
-                  <div className={`font-bold ${fps > 0 ? 'text-green-400' : 'text-red-400'}`}>{fps}</div>
+                  <div className="text-white/40 mb-1 text-[8px]">LATENCE</div>
+                  <div className="text-green-400 font-bold">{stats.latency}ms</div>
                 </div>
                 <div className="w-px h-8 bg-white/10" />
                 <div>
-                  <div className="text-white/40 mb-1 text-[8px]">STATUT</div>
-                  <div className={`font-bold uppercase text-[10px] ${streamStatus === 'online' ? 'text-green-400' : 'text-red-400'}`}>
-                    {streamStatus === 'online' ? 'LIVE' : streamStatus === 'connecting' ? '...' : 'OFF'}
-                  </div>
+                  <div className="text-white/40 mb-1 text-[8px]">OBJETS</div>
+                  <div className="text-orange-400 font-bold">{stats.detectedObjects}</div>
                 </div>
               </div>
             </div>
@@ -134,55 +186,39 @@ export default function LiveStream() {
           <div className="grid grid-cols-3 gap-4">
             <Card className="p-4 bg-card/50 border-zinc-800">
               <div className="text-[10px] text-muted-foreground mb-1 uppercase font-bold">Modèle Actif</div>
-              <div className="font-semibold text-white">YOLOv8-Custom</div>
+              <div className="font-semibold text-white">{runtime?.model || 'models/best_V5.pt'}</div>
             </Card>
             <Card className="p-4 bg-card/50 border-zinc-800">
               <div className="text-[10px] text-muted-foreground mb-1 uppercase font-bold">FPS Stream</div>
-              <div className="font-semibold text-white">{fps} fps</div>
+              <div className="font-semibold text-white">{fps} FPS</div>
             </Card>
             <Card className="p-4 bg-card/50 border-zinc-800">
               <div className="text-[10px] text-muted-foreground mb-1 uppercase font-bold">Zone de Détection</div>
-              <div className="font-semibold text-white">640px (Vertical)</div>
+              <div className="font-semibold text-white">{line ? `${line.type} · ${line.direction}` : 'N/A'}</div>
             </Card>
           </div>
         </div>
 
-        {/* Panneau Latéral */}
         <div className="space-y-6">
           <Card className="p-4 space-y-4 bg-card/50 border-zinc-800">
-            <div className="flex items-center gap-2 font-semibold text-white">
-              <Activity className="w-4 h-4 text-orange-500" />
-              <span>Détails de Session</span>
-            </div>
+            <div className="flex items-center gap-2 font-semibold text-white"><Activity className="w-4 h-4 text-orange-500" /><span>Détail Session</span></div>
             <div className="space-y-3">
-              <div className="flex justify-between text-sm">
-                <span className="text-muted-foreground">Début</span>
-                <span className="text-zinc-300">10:45</span>
-              </div>
-              <div className="flex justify-between text-sm">
-                <span className="text-muted-foreground">Durée</span>
-                <span className="text-zinc-300">02:15:22</span>
-              </div>
-              <div className="flex justify-between text-sm">
-                <span className="text-muted-foreground">Débit Moyen</span>
-                <span className="text-zinc-300">28.4 sacs/min</span>
-              </div>
+              <div className="flex justify-between text-sm"><span className="text-muted-foreground">Début</span><span className="text-zinc-300">{stats.activeSessionStart}</span></div>
+              <div className="flex justify-between text-sm"><span className="text-muted-foreground">Durée</span><span className="text-zinc-300">{stats.activeSessionDuration}</span></div>
+              <div className="flex justify-between text-sm"><span className="text-muted-foreground">Débit Moyen</span><span className="text-zinc-300">{stats.activeRate} sacs/min</span></div>
             </div>
           </Card>
 
           <Card className="p-4 space-y-4 border-red-500/20 bg-red-500/5">
-            <div className="flex items-center gap-2 font-semibold text-red-400">
-              <AlertCircle className="w-4 h-4" />
-              <span>Alertes Récentes</span>
-            </div>
+            <div className="flex items-center gap-2 font-semibold text-red-400"><AlertCircle className="w-4 h-4" /><span>Alertes Récentes</span></div>
             <div className="space-y-3">
               <div className="text-xs border-l-2 border-red-500 pl-2 py-1">
                 <div className="font-medium text-red-300">Code QR manquant</div>
-                <div className="text-red-400/60">Sac #405 - il y a 2 min</div>
+                <div className="text-red-400/60">Dernier rejet</div>
               </div>
               <div className="text-xs border-l-2 border-yellow-500 pl-2 py-1">
                 <div className="font-medium text-yellow-300">Variation d'éclairage</div>
-                <div className="text-yellow-400/60">Capteurs ajustés - il y a 15 min</div>
+                <div className="text-yellow-400/60">Surveillez la zone convoyeur</div>
               </div>
             </div>
             <Button variant="ghost" className="w-full text-[10px] text-zinc-500 hover:text-white" size="sm">VOIR TOUTES LES ALERTES</Button>

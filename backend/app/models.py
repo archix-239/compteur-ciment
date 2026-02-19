@@ -52,6 +52,17 @@ class AlertHistory(Base):
     message = Column(String)
     is_read = Column(Boolean, default=False)
 
+
+class QualityReview(Base):
+    __tablename__ = "quality_reviews"
+    id = Column(Integer, primary_key=True, index=True)
+    log_id = Column(Integer, ForeignKey("detection_logs.id"), index=True)
+    action = Column(String)  # validate, reject, ignore, correct, manual_add
+    target_status = Column(String, nullable=True)  # conforme / rejete
+    notes = Column(String, nullable=True)
+    reviewer = Column(String, default="operator")
+    created_at = Column(DateTime, default=datetime.datetime.utcnow)
+
 class SystemSetting(Base):
     __tablename__ = "system_settings"
     key = Column(String, primary_key=True, index=True)

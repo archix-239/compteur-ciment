@@ -94,16 +94,16 @@ Suivi de l'intégration réelle (remplacement des données fictives par des appe
 | # | Interface | Statut | Détails |
 |---|-----------|--------|---------|
 | 1 | **Configuration — Paramètres Caméra** | Fait | GET/PUT `/api/config/camera`, POST `/api/config/camera/test` (test réel OpenCV). Formulaire connecté, sauvegarde en BDD, test de connexion caméra fonctionnel. Preview WebSocket vidéo. |
-| 2 | Configuration — Modèle IA | En attente | — |
-| 3 | Configuration — Ligne Virtuelle | En attente | — |
+| 2 | **Configuration — Modèle IA** | Fait | GET/PUT `/api/config/model` connecté au frontend. Paramètres (modèle, seuil confiance, NMS, max det, imgsz, tracking persist) persistés en BDD et appliqués à chaud au moteur vision. |
+| 3 | **Configuration — Ligne Virtuelle** | Fait | GET/PUT `/api/config/virtual-line` connecté. Position, largeur et direction persistées et appliquées en temps réel à la logique de franchissement de ligne. |
 | 4 | Configuration — Templates | En attente | — |
 | 5 | **Monitoring — Flux en Direct** | Fait | Streaming vidéo via WebSocket `/ws/video` (base64 JPEG). Hook `useVideoStream` réutilisable. FPS en temps réel. Reconnexion automatique. Support RTSP/HTTP/Webcam. |
-| 6 | Production — Gestion des Sessions | En attente | — |
-| 7 | Production — Journal de Production | En attente | — |
+| 6 | **Production — Gestion des Sessions** | Fait | Sessions réelles connectées via API: démarrage/arrêt, session active, stats live et historique paginé (`GET /sessions/`, `POST /sessions/start`, `POST /sessions/stop/{id}`). |
+| 7 | **Production — Journal de Production** | Fait | Tableau branché sur `GET /api/logs/` avec pagination backend + filtres (statut, recherche identifiant), miniatures et ouverture capture. |
 | 8 | Production — Timeline | En attente | — |
-| 9 | Qualité — Tableau de Bord | En attente | — |
-| 10 | Qualité — Vérification Manuelle | En attente | — |
-| 11 | Qualité — Détection d'Anomalies | En attente | — |
+| 9 | **Qualité — Tableau de Bord** | Fait | Dashboard qualité branché sur `/api/quality/summary` avec distributions de confiance/logo calculées depuis les logs réels. |
+| 10 | **Qualité — Vérification Manuelle** | Fait | File de revue connectée (`GET /api/quality/manual-verification`) + action opérateur via `PATCH /api/logs/{id}` (Valider/Rejeter) + historique (`GET /api/quality/reviews`). |
+| 11 | **Qualité — Détection d'Anomalies** | Fait | Liste d'anomalies réelles depuis `/api/quality/anomalies` (rejets + scores faibles) avec miniatures snapshots backend. |
 | 12 | Alertes — Gestion des Alertes | En attente | — |
 | 13 | Rapports — Production | En attente | — |
 | 14 | Rapports — Export de Données | En attente | — |
@@ -125,6 +125,20 @@ Suivi de l'intégration réelle (remplacement des données fictives par des appe
 | `GET` | `/api/config/camera` | Récupère la configuration caméra actuelle |
 | `PUT` | `/api/config/camera` | Sauvegarde la configuration caméra |
 | `POST` | `/api/config/camera/test` | Teste la connexion à la source vidéo (vérification réelle via OpenCV) |
+| `GET` | `/api/config/model` | Récupère la configuration IA active (modèle + seuils inférence) |
+| `PUT` | `/api/config/model` | Sauvegarde et applique à chaud la configuration IA |
+| `GET` | `/api/config/virtual-line` | Récupère la configuration de la ligne virtuelle |
+| `PUT` | `/api/config/virtual-line` | Sauvegarde et applique la ligne virtuelle (position, largeur, direction) |
+| `GET` | `/sessions/` | Liste paginée des sessions + session active courante |
+| `GET` | `/sessions/active` | Retourne la session active (ou `null`) |
+| `POST` | `/sessions/start` | Démarre une session de production (idempotent si déjà active) |
+| `POST` | `/sessions/stop/{session_id}` | Arrête une session active |
+| `GET` | `/api/logs/` | Journal de production paginé (filtres `status`, `search`, `session_id`) |
+| `PATCH` | `/api/logs/{id}` | Met à jour la décision qualité d'un sac (validation/rejet/correction) et journalise la revue |
+| `GET` | `/api/quality/manual-verification` | File des sacs à vérifier manuellement (pagination + recherche) |
+| `GET` | `/api/quality/reviews` | Historique des actions de revue humaine |
+| `GET` | `/api/quality/anomalies` | Anomalies qualité générées depuis les logs (rejets/faible confiance) |
+| `GET` | `/api/quality/summary` | KPI et distributions qualité réelles pour les graphiques |
 | `WS` | `/ws/video` | Stream vidéo temps réel (frames JPEG en base64 via WebSocket) |
 | `WS` | `/ws` | Événements temps réel (COUNT_EVENT, etc.) |
 | `GET` | `/api/vision/video_feed` | Stream MJPEG (fallback, conservé pour compatibilité) |
@@ -144,3 +158,22 @@ WebSocket /ws/video → Frontend (useVideoStream hook) → <img> element
 - **HTTP/ONVIF** : `http://192.168.1.x:8080/video`
 - **Webcam locale** : Index entier (0, 1, 2...)
 - **Fichier vidéo** : Chemin absolu vers .mp4, .avi, etc.
+
+
+## Correctifs Post-Test (Feedback Opérationnel)
+
+### Correctif 1 — Application réelle des paramètres caméra
+- Le backend applique les propriétés OpenCV matérielles (`FRAME_WIDTH/HEIGHT`, `FPS`, `BRIGHTNESS`, `CONTRAST`, `AUTOFOCUS`) **et** un post-processing logiciel garanti dans la boucle vision (`resize` + `convertScaleAbs`).
+- Pour les fichiers vidéo, le FPS demandé est respecté via régulation temporelle (`sleep`) côté boucle de lecture.
+- Lors d'une sauvegarde caméra, le flux est redémarré proprement pour les sources qui ne supportent pas le hot-apply.
+- Stabilisation RTSP Windows: arrêt/redémarrage protégé (pas de second thread si stop incomplet), restart caméra uniquement quand la source change, et test caméra sans pause forcée du moteur pour les flux RTSP afin d'éviter les timeouts/assertions FFMPEG.
+
+### Correctif 2 — Ligne virtuelle directionnelle + visualisation réelle
+- Nouveaux endpoints `GET/PUT /api/config/line` avec `type` (`horizontal`/`vertical`) et `direction` (`top-down`, `bottom-up`, `left-right`, `right-left`) + cohérence forcée type/direction.
+- La page **Configuration > Ligne Virtuelle** conserve le design validé et affiche le flux réel WebSocket avec overlay React de la ligne (source visuelle unique).
+
+### Correctif 3 — Live Stream & Sessions
+- Suppression du doublon d'overlay: le backend envoie une image sans ligne, et React dessine l'overlay (source de vérité unique).
+- Le design Industrial Dark Mode de **Flux en Direct** et **Gestion des Sessions** est restauré; seules les valeurs backend ont été reconnectées (sans refonte structurelle).
+- Les badges Live Stream (FPS, nom caméra, modèle actif) sont branchés sur des données runtime via `GET /api/config/runtime`.
+- Endpoints de suppression sessions conservés côté backend: `DELETE /api/sessions/{id}` et `DELETE /api/sessions/batch`.

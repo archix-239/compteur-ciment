@@ -30,7 +30,21 @@ class VisionEngine:
         self.model_path = 'models/best_V5.pt'
         self.video_source = 0  # Default to 0, can be updated from settings
         self.confidence_threshold = 0.7
+        self.nms_iou_threshold = 0.45
+        self.max_detections = 100
+        self.inference_size = 1280
+        self.tracking_persistence = True
+
         self.line_x = 640
+        self.line_y_percent = 60
+        self.line_span_percent = 80
+        self.counting_direction = "left-right"
+
+        self.camera_resolution = "720p"
+        self.camera_fps = 30
+        self.camera_brightness = 50
+        self.camera_contrast = 65
+        self.camera_autofocus = True
 
         self.model = None
         self.cap = None
@@ -56,8 +70,14 @@ class VisionEngine:
         self.video_subscribers_lock = threading.Lock()
 
         # Streaming settings
-        self.jpeg_quality = 70
+        self.jpeg_quality = 65
         self.target_fps = 15  # Target FPS for WebSocket streaming (lower than capture FPS)
+
+        # Latency controls
+        self.low_latency_mode = True
+        self.max_grab_skip = 3
+        self.last_annotated_frame = None
+        self.inference_every_n_frames = 2
 
         # Ensure capture directory exists
         os.makedirs("backend/static/captures", exist_ok=True)
@@ -94,7 +114,10 @@ class VisionEngine:
 
         if isinstance(source, str) and source.startswith("rtsp://"):
             # RTSP: use FFMPEG backend with TCP transport for reliability
-            os.environ["OPENCV_FFMPEG_CAPTURE_OPTIONS"] = "rtsp_transport;tcp|analyzeduration;5000000|probesize;5000000"
+            os.environ["OPENCV_FFMPEG_CAPTURE_OPTIONS"] = (
+                "rtsp_transport;tcp|fflags;nobuffer|flags;low_delay|"
+                "max_delay;5000000|analyzeduration;1000000|probesize;32768|stimeout;5000000"
+            )
             cap = cv2.VideoCapture(source, cv2.CAP_FFMPEG)
         elif isinstance(source, str) and (source.startswith("http://") or source.startswith("https://")):
             # HTTP/ONVIF stream
@@ -113,13 +136,137 @@ class VisionEngine:
         if cap.isOpened():
             # Reduce internal buffer to minimize latency
             cap.set(cv2.CAP_PROP_BUFFERSIZE, 1)
+            # Best effort low-latency hints (backend-dependent)
+            cap.set(cv2.CAP_PROP_FPS, 30)
+            self._apply_capture_properties()
         else:
             print(f"ERREUR: _open_capture a échoué pour la source: {source}")
 
         return cap
 
+
+    def apply_model_config(
+        self,
+        model_path=None,
+        confidence_threshold=None,
+        nms_iou_threshold=None,
+        max_detections=None,
+        inference_size=None,
+        tracking_persistence=None,
+    ):
+        if confidence_threshold is not None:
+            self.confidence_threshold = float(confidence_threshold)
+        if nms_iou_threshold is not None:
+            self.nms_iou_threshold = float(nms_iou_threshold)
+        if max_detections is not None:
+            self.max_detections = int(max_detections)
+        if inference_size is not None:
+            self.inference_size = int(inference_size)
+        if tracking_persistence is not None:
+            self.tracking_persistence = bool(tracking_persistence)
+
+        if model_path and model_path != self.model_path:
+            self.model_path = model_path
+            try:
+                print(f"INFO: Rechargement du modèle YOLO depuis {self.model_path}")
+                self.model = YOLO(self.model_path)
+            except Exception as e:
+                print(f"ERREUR: Rechargement modèle échoué: {e}")
+
+    def apply_virtual_line_config(self, position_percent=None, line_span_percent=None, direction=None):
+        if direction is not None:
+            self.counting_direction = direction
+        if position_percent is not None:
+            pos = int(position_percent)
+            self.line_y_percent = pos
+            if self.counting_direction in ("left-right", "right-left"):
+                self.line_x = int((pos / 100.0) * 1280)
+        if line_span_percent is not None:
+            self.line_span_percent = int(line_span_percent)
+
+    def _crossed_virtual_line(self, track):
+        if len(track) < 2:
+            return False
+
+        prev = track[0]
+        curr = track[1]
+
+        if self.counting_direction == "left-right":
+            return prev["x"] < self.line_x and curr["x"] >= self.line_x
+        if self.counting_direction == "right-left":
+            return prev["x"] > self.line_x and curr["x"] <= self.line_x
+        if self.counting_direction == "top-down":
+            line_y = int((self.line_y_percent / 100.0) * 720)
+            return prev["y"] < line_y and curr["y"] >= line_y
+        if self.counting_direction == "bottom-up":
+            line_y = int((self.line_y_percent / 100.0) * 720)
+            return prev["y"] > line_y and curr["y"] <= line_y
+        return prev["x"] < self.line_x and curr["x"] >= self.line_x
+
+
+    @staticmethod
+    def _resolution_to_wh(resolution: str):
+        mapping = {
+            "1080p": (1920, 1080),
+            "720p": (1280, 720),
+            "480p": (640, 480),
+        }
+        return mapping.get((resolution or "720p").lower(), (1280, 720))
+
+    def _apply_capture_properties(self):
+        if self.cap is None or not self.cap.isOpened():
+            return
+        try:
+            width, height = self._resolution_to_wh(self.camera_resolution)
+            self.cap.set(cv2.CAP_PROP_FRAME_WIDTH, width)
+            self.cap.set(cv2.CAP_PROP_FRAME_HEIGHT, height)
+            self.cap.set(cv2.CAP_PROP_FPS, float(self.camera_fps))
+            self.cap.set(cv2.CAP_PROP_BRIGHTNESS, float(self.camera_brightness) / 100.0)
+            self.cap.set(cv2.CAP_PROP_CONTRAST, float(self.camera_contrast) / 100.0)
+            self.cap.set(cv2.CAP_PROP_AUTOFOCUS, 1.0 if self.camera_autofocus else 0.0)
+        except Exception as e:
+            print(f"AVERTISSEMENT: Impossible d'appliquer certaines propriétés caméra: {e}")
+
+    def apply_camera_settings(self, resolution=None, fps=None, brightness=None, contrast=None, autofocus=None):
+        if resolution is not None:
+            self.camera_resolution = resolution
+        if fps is not None:
+            self.camera_fps = int(fps)
+        if brightness is not None:
+            self.camera_brightness = int(brightness)
+        if contrast is not None:
+            self.camera_contrast = int(contrast)
+        if autofocus is not None:
+            self.camera_autofocus = bool(autofocus)
+
+        # Try hot-apply
+        self._apply_capture_properties()
+
+    def get_runtime_info(self):
+        fps_val = 0.0
+        if self.cap is not None and self.cap.isOpened():
+            try:
+                fps_val = float(self.cap.get(cv2.CAP_PROP_FPS) or 0.0)
+            except Exception:
+                pass
+
+        return {
+            "camera_name": f"CAM_{self.video_source}",
+            "model": self.model_path,
+            "capture_fps": round(fps_val, 1),
+            "line": {
+                "type": "vertical" if self.counting_direction in ("left-right", "right-left") else "horizontal",
+                "direction": self.counting_direction,
+                "position_percent": self.line_y_percent if self.counting_direction in ("top-down", "bottom-up") else int((self.line_x / 1280) * 100),
+                "line_span_percent": self.line_span_percent,
+            }
+        }
+
     def start(self):
         if self.running:
+            return
+        if self.thread and self.thread.is_alive():
+            print("AVERTISSEMENT: Start ignoré, thread vision déjà actif")
             return
 
         print(f"INFO: Démarrage du moteur de vision (Source: {self.video_source}, Platform: {sys.platform})...")
@@ -147,18 +294,14 @@ class VisionEngine:
         self.thread.start()
 
     def stop(self):
-        if not self.running:
-            return
+        if not self.running and not (self.thread and self.thread.is_alive()):
+            return True
 
         print("INFO: Arrêt du moteur de vision...")
         self.running = False
         self._stop_event.set()
 
-        if self.thread and self.thread.is_alive():
-            self.thread.join(timeout=5)
-            if self.thread.is_alive():
-                print("AVERTISSEMENT: Le thread vision ne s'est pas arrêté dans le délai.")
-
+        # Release capture first to unblock potential blocking read()
         if self.cap:
             try:
                 self.cap.release()
@@ -166,9 +309,20 @@ class VisionEngine:
                 pass
             self.cap = None
 
+        stopped = True
+        if self.thread and self.thread.is_alive():
+            self.thread.join(timeout=8)
+            if self.thread.is_alive():
+                stopped = False
+                print("ERREUR: Le thread vision ne s'est pas arrêté; restart annulé pour éviter conflit FFMPEG.")
+
+        if stopped:
+            self.thread = None
+
         self.annotated_frame = None
         self.latest_frame = None
         print("INFO: Moteur de vision arrêté.")
+        return stopped
 
     def _broadcast_frame(self, frame):
         """Encode frame and send to all WebSocket subscribers."""
@@ -199,9 +353,11 @@ class VisionEngine:
     def _run_loop(self):
         frame_interval = 1.0 / self.target_fps
         last_broadcast = 0
+        last_frame_ts = 0.0
         reconnect_attempts = 0
         max_reconnect_delay = 30  # seconds
         frames_read = 0
+        frames_for_inference = 0
 
         # Open capture on THIS thread (critical for DirectShow/COM on Windows)
         self.cap = self._open_capture()
@@ -245,6 +401,36 @@ class VisionEngine:
                 reconnect_attempts += 1
                 continue
 
+            if self.low_latency_mode and not self._is_webcam_index(self.video_source):
+                # For IP/file sources, drop buffered frames to stay close to real-time
+                for _ in range(self.max_grab_skip):
+                    grabbed = self.cap.grab()
+                    if not grabbed:
+                        break
+                    ok, newer = self.cap.retrieve()
+                    if not ok or newer is None:
+                        break
+                    frame = newer
+
+            # Software post-processing (works for RTSP/files where cap.set may be ignored)
+            target_w, target_h = self._resolution_to_wh(self.camera_resolution)
+            if frame.shape[1] != target_w or frame.shape[0] != target_h:
+                frame = cv2.resize(frame, (target_w, target_h), interpolation=cv2.INTER_LINEAR)
+
+            alpha = max(0.1, min(3.0, float(self.camera_contrast) / 50.0))
+            beta = int((float(self.camera_brightness) - 50.0) * 2.0)
+            frame = cv2.convertScaleAbs(frame, alpha=alpha, beta=beta)
+
+            # For video files, throttle read loop to requested FPS
+            source_str = str(self.video_source)
+            is_file_source = (not self._is_webcam_index(self.video_source)) and (not source_str.startswith("rtsp://")) and (not source_str.startswith("http://")) and (not source_str.startswith("https://"))
+            if is_file_source and self.camera_fps > 0:
+                now_sleep = time.monotonic()
+                target_interval = 1.0 / float(self.camera_fps)
+                if last_frame_ts > 0 and (now_sleep - last_frame_ts) < target_interval:
+                    time.sleep(max(0.0, target_interval - (now_sleep - last_frame_ts)))
+                last_frame_ts = time.monotonic()
+
             # Reset reconnect counter on successful read
             reconnect_attempts = 0
             frames_read += 1
@@ -254,7 +440,6 @@ class VisionEngine:
                 sub_count = len(self.video_subscribers)
                 print(f"INFO: Vision engine — {frames_read} frames lues, {sub_count} subscriber(s) WebSocket")
 
-            frame = cv2.resize(frame, (1280, 720))
             self.latest_frame = frame.copy()
 
             # Broadcast raw frame immediately (before YOLO) for instant feedback
@@ -262,91 +447,108 @@ class VisionEngine:
             now = time.monotonic()
             if now - last_broadcast >= frame_interval:
                 preview = frame.copy()
-                cv2.line(preview, (self.line_x, 0), (self.line_x, preview.shape[0]), (0, 255, 255), 2)
                 self._broadcast_frame(preview)
                 last_broadcast = now
                 if frames_read <= 3:
                     sub_count = len(self.video_subscribers)
                     print(f"INFO: Broadcast frame #{frames_read} envoyée ({sub_count} subscriber(s))")
 
-            results = self.model.track(frame, persist=True, verbose=False, conf=self.confidence_threshold)
-            annotated_frame = frame.copy()
+            frames_for_inference += 1
+            run_inference = (frames_for_inference % self.inference_every_n_frames) == 0
 
-            if results[0].boxes is not None and results[0].boxes.id is not None:
-                boxes_xyxy = results[0].boxes.xyxy.cpu()
-                track_ids = results[0].boxes.id.int().cpu().tolist()
+            if run_inference:
+                results = self.model.track(
+                    frame,
+                    persist=self.tracking_persistence,
+                    verbose=False,
+                    conf=self.confidence_threshold,
+                    iou=self.nms_iou_threshold,
+                    max_det=self.max_detections,
+                    imgsz=self.inference_size,
+                )
+                annotated_frame = frame.copy()
 
-                for box_xyxy, track_id in zip(boxes_xyxy, track_ids):
-                    x1, y1, x2, y2 = map(int, box_xyxy)
-                    roi_bgr = frame[y1:y2, x1:x2]
-                    if roi_bgr.size == 0:
-                        continue
+                if results[0].boxes is not None and results[0].boxes.id is not None:
+                    boxes_xyxy = results[0].boxes.xyxy.cpu()
+                    track_ids = results[0].boxes.id.int().cpu().tolist()
 
-                    if self.object_data[track_id]["qr_uuid"] is None:
-                        decoded_qrs = qr_decode(roi_bgr)
-                        if decoded_qrs:
-                            qr_data = decoded_qrs[0].data.decode('utf-8')
-                            self.object_data[track_id]["qr_uuid"] = qr_data
+                    for box_xyxy, track_id in zip(boxes_xyxy, track_ids):
+                        x1, y1, x2, y2 = map(int, box_xyxy)
+                        roi_bgr = frame[y1:y2, x1:x2]
+                        if roi_bgr.size == 0:
+                            continue
 
-                    current_uuid = self.object_data[track_id]["qr_uuid"]
-                    is_conforme = current_uuid is not None
+                        if self.object_data[track_id]["qr_uuid"] is None:
+                            decoded_qrs = qr_decode(roi_bgr)
+                            if decoded_qrs:
+                                qr_data = decoded_qrs[0].data.decode('utf-8')
+                                self.object_data[track_id]["qr_uuid"] = qr_data
 
-                    bag_status = "conforme" if is_conforme else "rejeté"
-                    box_color = (0, 255, 0) if is_conforme else (0, 0, 255)
+                        current_uuid = self.object_data[track_id]["qr_uuid"]
+                        is_conforme = current_uuid is not None
 
-                    already_counted = (is_conforme and current_uuid in self.counted_conforme_uuids) or \
-                                      (not is_conforme and track_id in self.counted_rejete_ids)
+                        bag_status = "conforme" if is_conforme else "rejeté"
+                        box_color = (0, 255, 0) if is_conforme else (0, 0, 255)
 
-                    if already_counted:
-                        bag_status = "compté"
-                        box_color = (255, 0, 0)
+                        already_counted = (is_conforme and current_uuid in self.counted_conforme_uuids) or \
+                                          (not is_conforme and track_id in self.counted_rejete_ids)
 
-                    cv2.rectangle(annotated_frame, (x1, y1), (x2, y2), box_color, 2)
-                    label = f"ID:{track_id} - {bag_status.upper()}"
-                    cv2.putText(annotated_frame, label, (x1, y1 - 10), cv2.FONT_HERSHEY_SIMPLEX, 0.5, box_color, 2)
+                        if already_counted:
+                            bag_status = "compté"
+                            box_color = (255, 0, 0)
 
-                    center_x = (x1 + x2) // 2
-                    track = self.track_history[track_id]
-                    track.append(center_x)
-                    if len(track) > 2:
-                        track.pop(0)
+                        cv2.rectangle(annotated_frame, (x1, y1), (x2, y2), box_color, 2)
+                        label = f"ID:{track_id} - {bag_status.upper()}"
+                        cv2.putText(annotated_frame, label, (x1, y1 - 10), cv2.FONT_HERSHEY_SIMPLEX, 0.5, box_color, 2)
 
-                    if self.active_session_id and not already_counted and len(track) == 2 and track[0] < self.line_x and track[1] >= self.line_x:
-                        detection_score = float(results[0].boxes.conf[track_ids.index(track_id)])
+                        center_x = (x1 + x2) // 2
+                        center_y = (y1 + y2) // 2
+                        track = self.track_history[track_id]
+                        track.append({"x": center_x, "y": center_y})
+                        if len(track) > 2:
+                            track.pop(0)
 
-                        # Save capture
-                        timestamp_str = datetime.now().strftime('%Y%m%d_%H%M%S_%f')
-                        filename = f"capture_{timestamp_str}.jpg"
-                        filepath = os.path.join("backend/static/captures", filename)
-                        cv2.imwrite(filepath, roi_bgr)
+                        if self.active_session_id and not already_counted and len(track) == 2 and self._crossed_virtual_line(track):
+                            detection_score = float(results[0].boxes.conf[track_ids.index(track_id)])
 
-                        event_data = {
-                            "session_id": self.active_session_id,
-                            "status": "conforme" if is_conforme else "rejete",
-                            "identifier": current_uuid if is_conforme else f"track_id_{track_id}",
-                            "timestamp": datetime.utcnow(),
-                            "detection_score": detection_score,
-                            "capture_url": f"/static/captures/{filename}",
-                            "logo_score": 0.9 + (np.random.random() * 0.09),
-                            "color_score": 0.85 + (np.random.random() * 0.1),
-                            "interval": 2.5
-                        }
+                            # Save capture
+                            timestamp_str = datetime.now().strftime('%Y%m%d_%H%M%S_%f')
+                            filename = f"capture_{timestamp_str}.jpg"
+                            filepath = os.path.join("backend/static/captures", filename)
+                            cv2.imwrite(filepath, roi_bgr)
 
-                        if is_conforme:
-                            self.counted_conforme_uuids.add(current_uuid)
-                        else:
-                            self.counted_rejete_ids.add(track_id)
+                            event_data = {
+                                "session_id": self.active_session_id,
+                                "status": "conforme" if is_conforme else "rejete",
+                                "identifier": current_uuid if is_conforme else f"track_id_{track_id}",
+                                "timestamp": datetime.utcnow(),
+                                "detection_score": detection_score,
+                                "capture_url": f"/static/captures/{filename}",
+                                "logo_score": 0.9 + (np.random.random() * 0.09),
+                                "color_score": 0.85 + (np.random.random() * 0.1),
+                                "interval": 2.5
+                            }
 
-                        if self.on_count_callback:
-                            try:
-                                self.on_count_callback(event_data)
-                            except Exception as e:
-                                print(f"ERREUR callback comptage: {e}")
+                            if is_conforme:
+                                self.counted_conforme_uuids.add(current_uuid)
+                            else:
+                                self.counted_rejete_ids.add(track_id)
 
-            cv2.line(annotated_frame, (self.line_x, 0), (self.line_x, annotated_frame.shape[0]), (0, 255, 255), 2)
+                            if self.on_count_callback:
+                                try:
+                                    self.on_count_callback(event_data)
+                                except Exception as e:
+                                    print(f"ERREUR callback comptage: {e}")
+
+            else:
+                if self.last_annotated_frame is not None:
+                    annotated_frame = self.last_annotated_frame.copy()
+                else:
+                    annotated_frame = frame.copy()
 
             with self.frame_lock:
                 self.annotated_frame = annotated_frame
+                self.last_annotated_frame = annotated_frame
 
             # Broadcast annotated frame (post-YOLO) if enough time has passed
             # since the pre-YOLO broadcast above
