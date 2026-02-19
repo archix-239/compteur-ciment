@@ -116,7 +116,7 @@ async def lifespan(app: FastAPI):
             models.SystemSetting.key.in_([
                 "camera_source_type", "camera_url", "camera_resolution", "camera_fps", "camera_brightness", "camera_contrast", "camera_autofocus",
                 "detection_model_path", "detection_threshold", "detection_nms_iou", "detection_max_det", "detection_imgsz", "tracking_persistence",
-                "virtual_line_x", "virtual_line_y_percent", "virtual_line_span_percent", "virtual_line_direction"
+                "virtual_line_y_percent", "virtual_line_span_percent", "virtual_line_direction"
             ])
         ).all()
         config = {s.key: s.value for s in settings}
@@ -150,8 +150,6 @@ async def lifespan(app: FastAPI):
             line_span_percent=int(config.get("virtual_line_span_percent", "80")),
             direction=config.get("virtual_line_direction", "left-right"),
         )
-        if "virtual_line_x" in config:
-            v_engine.line_x = int(config.get("virtual_line_x", "640"))
 
         v_engine.set_on_count_callback(handle_vision_event)
         v_engine.start()

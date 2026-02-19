@@ -56,7 +56,7 @@ class VisionEngine:
         self.annotated_frame = None
         self.frame_lock = threading.Lock()
 
-        self.track_history = defaultdict(list)
+        self.track_seen_before_line = set()
         self.object_data = defaultdict(lambda: {"qr_uuid": None})
         self.counted_conforme_uuids = set()
         self.counted_rejete_ids = set()
@@ -89,7 +89,7 @@ class VisionEngine:
         # Reset counters for new session
         self.counted_conforme_uuids.clear()
         self.counted_rejete_ids.clear()
-        self.track_history.clear()
+        self.track_seen_before_line.clear()
         self.object_data.clear()
 
     def set_on_count_callback(self, callback):
@@ -180,28 +180,24 @@ class VisionEngine:
             pos = int(position_percent)
             self.line_y_percent = pos
             if self.counting_direction in ("left-right", "right-left"):
-                self.line_x = int((pos / 100.0) * 1280)
+                frame_w = self._resolution_to_wh(self.camera_resolution)[0]
+                self.line_x = int((pos / 100.0) * frame_w)
         if line_span_percent is not None:
             self.line_span_percent = int(line_span_percent)
 
-    def _crossed_virtual_line(self, track):
-        if len(track) < 2:
-            return False
-
-        prev = track[0]
-        curr = track[1]
-
+    def _is_before_line(self, x, y):
+        """Retourne True si le point est du côté d'approche de la ligne de comptage."""
         if self.counting_direction == "left-right":
-            return prev["x"] < self.line_x and curr["x"] >= self.line_x
+            return x < self.line_x
         if self.counting_direction == "right-left":
-            return prev["x"] > self.line_x and curr["x"] <= self.line_x
+            return x > self.line_x
+        _, frame_h = self._resolution_to_wh(self.camera_resolution)
+        line_y = int((self.line_y_percent / 100.0) * frame_h)
         if self.counting_direction == "top-down":
-            line_y = int((self.line_y_percent / 100.0) * 720)
-            return prev["y"] < line_y and curr["y"] >= line_y
+            return y < line_y
         if self.counting_direction == "bottom-up":
-            line_y = int((self.line_y_percent / 100.0) * 720)
-            return prev["y"] > line_y and curr["y"] <= line_y
-        return prev["x"] < self.line_x and curr["x"] >= self.line_x
+            return y > line_y
+        return x < self.line_x
 
 
     @staticmethod
@@ -257,7 +253,7 @@ class VisionEngine:
             "line": {
                 "type": "vertical" if self.counting_direction in ("left-right", "right-left") else "horizontal",
                 "direction": self.counting_direction,
-                "position_percent": self.line_y_percent if self.counting_direction in ("top-down", "bottom-up") else int((self.line_x / 1280) * 100),
+                "position_percent": self.line_y_percent if self.counting_direction in ("top-down", "bottom-up") else int((self.line_x / self._resolution_to_wh(self.camera_resolution)[0]) * 100),
                 "line_span_percent": self.line_span_percent,
             }
         }
@@ -503,12 +499,13 @@ class VisionEngine:
 
                         center_x = (x1 + x2) // 2
                         center_y = (y1 + y2) // 2
-                        track = self.track_history[track_id]
-                        track.append({"x": center_x, "y": center_y})
-                        if len(track) > 2:
-                            track.pop(0)
 
-                        if self.active_session_id and not already_counted and len(track) == 2 and self._crossed_virtual_line(track):
+                        on_before = self._is_before_line(center_x, center_y)
+                        if on_before:
+                            self.track_seen_before_line.add(track_id)
+                        crossed = not on_before and track_id in self.track_seen_before_line
+
+                        if self.active_session_id and not already_counted and crossed:
                             detection_score = float(results[0].boxes.conf[track_ids.index(track_id)])
 
                             # Save capture
@@ -533,6 +530,7 @@ class VisionEngine:
                                 self.counted_conforme_uuids.add(current_uuid)
                             else:
                                 self.counted_rejete_ids.add(track_id)
+                            self.track_seen_before_line.discard(track_id)
 
                             if self.on_count_callback:
                                 try:
