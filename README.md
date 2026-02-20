@@ -106,7 +106,7 @@ Suivi de l'intégration réelle (remplacement des données fictives par des appe
 | 10 | **Qualité — Vérification Manuelle** | Fait | File de revue connectée (`GET /api/quality/manual-verification`) + action opérateur via `PATCH /api/logs/{id}` (Valider/Rejeter) + historique (`GET /api/quality/reviews`). |
 | 11 | **Qualité — Détection d'Anomalies** | Fait | Liste d'anomalies réelles depuis `/api/quality/anomalies` (rejets + scores faibles) avec miniatures snapshots backend. |
 | 12 | Alertes — Gestion des Alertes | En attente | — |
-| 13 | Rapports — Production | En attente | — |
+| 13 | **Rapports — Production** | Fait | `GET /api/reports/production?period=day\|week\|month` : métriques réelles (totalBags, avgInterval, detectionRate, sessionHours, availability, OEE) + deltas vs période précédente. Graphique comparaison actuelle vs précédente (buckets horaires/journaliers/hebdo). Décomposition OEE bar chart (Disponibilité, Performance, Qualité). Analyses clés dynamiques (pic de production, consistance). Export CSV direct `GET /api/reports/export/csv`. Icônes `?` tooltip sur chaque indicateur. |
 | 14 | Rapports — Export de Données | En attente | — |
 | 15 | Rapports — Piste d'Audit | En attente | — |
 | 16 | Administration — Utilisateurs | En attente | — |
@@ -130,6 +130,8 @@ Suivi de l'intégration réelle (remplacement des données fictives par des appe
 | `DELETE` | `/api/models/{filename}` | Supprime un `.pt` (refuse si modèle actif) |
 | `GET` | `/api/timeline/hourly` | Distribution horaire sur N dernières heures (`?hours=6\|24\|72`) : count, interval moyen, rejets par bucket + analyse des pics |
 | `GET` | `/api/analytics/oee` | OEE complet (`?hours=6\|24\|168\|720`) : oee, oeeDelta, availability, performance, quality, hourlyData (buckets adaptatifs), downtimeData (pie répartition), recommendations IA dynamiques |
+| `GET` | `/api/reports/production` | Rapport de production (`?period=day\|week\|month`) : KPI + deltas vs période précédente, trendData comparaison, oeeData (Disponibilité/Performance/Qualité), peak bucket, consistance |
+| `GET` | `/api/reports/export/csv` | Export CSV des logs de détection de la période (`?period=day\|week\|month`) : ID, timestamp, session, statut, scores, intervalle, capture URL |
 | `GET` | `/api/config/camera` | Récupère la configuration caméra actuelle |
 | `PUT` | `/api/config/camera` | Sauvegarde la configuration caméra |
 | `POST` | `/api/config/camera/test` | Teste la connexion à la source vidéo (vérification réelle via OpenCV) |

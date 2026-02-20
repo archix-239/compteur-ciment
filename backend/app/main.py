@@ -266,6 +266,234 @@ def _recompute_session_counters(db: Session, session_id: str):
 
 
 
+# ─── Production Reports ──────────────────────────────────────────────────────
+@app.get("/api/reports/production")
+async def get_production_report(period: str = "week", db: Session = Depends(get_db)):
+    """Production report for day / week / month with real vs previous period comparison."""
+    import math as _math
+    from datetime import datetime as _dt, timedelta as _td
+
+    PERIOD_HOURS = {"day": 24, "week": 168, "month": 720}
+    hours = PERIOD_HOURS.get(period, 168)
+    now = _dt.utcnow()
+    start = now - _td(hours=hours)
+    prev_start = start - _td(hours=hours)
+    planned_seconds = hours * 3600
+    TARGET_RATE = 1100  # bags/h
+
+    def _to_dt(ts):
+        if isinstance(ts, str):
+            try:
+                return _dt.fromisoformat(ts)
+            except Exception:
+                return None
+        return ts
+
+    # ── Current period ──────────────────────────────────────────────────────
+    logs = (
+        db.query(models.DetectionLog)
+        .filter(models.DetectionLog.timestamp >= start)
+        .order_by(models.DetectionLog.timestamp.asc())
+        .all()
+    )
+    conforming = [l for l in logs if l.status == "conforme"]
+    rejected   = [l for l in logs if l.status == "rejete"]
+    total_bags     = len(conforming)
+    rejected_count = len(rejected)
+    total_inspected = total_bags + rejected_count
+
+    detection_rate = round((total_bags / total_inspected * 100) if total_inspected > 0 else 100.0, 1)
+
+    all_ts = sorted(ts for l in conforming if (ts := _to_dt(l.timestamp)) is not None)
+    intervals: list[float] = []
+    for i in range(1, len(all_ts)):
+        d = (all_ts[i] - all_ts[i - 1]).total_seconds()
+        if 0 < d < 120:
+            intervals.append(d)
+    avg_interval = round(sum(intervals) / len(intervals), 2) if intervals else 0.0
+
+    # ── Previous period ──────────────────────────────────────────────────────
+    prev_logs = db.query(models.DetectionLog).filter(
+        models.DetectionLog.timestamp >= prev_start,
+        models.DetectionLog.timestamp < start,
+    ).all()
+    prev_conforming = [l for l in prev_logs if l.status == "conforme"]
+    prev_total      = len(prev_conforming)
+    prev_rejected   = len([l for l in prev_logs if l.status == "rejete"])
+    prev_inspected  = prev_total + prev_rejected
+    prev_detection_rate = round(
+        (prev_total / prev_inspected * 100) if prev_inspected > 0 else 100.0, 1
+    )
+
+    prev_ts = sorted(ts for l in prev_conforming if (ts := _to_dt(l.timestamp)) is not None)
+    prev_intervals: list[float] = []
+    for i in range(1, len(prev_ts)):
+        d = (prev_ts[i] - prev_ts[i - 1]).total_seconds()
+        if 0 < d < 120:
+            prev_intervals.append(d)
+    avg_interval_prev = round(sum(prev_intervals) / len(prev_intervals), 2) if prev_intervals else 0.0
+
+    # Deltas
+    bags_delta_pct = round(((total_bags - prev_total) / prev_total * 100) if prev_total > 0 else 0.0, 1)
+    interval_delta_pct = round(
+        ((avg_interval - avg_interval_prev) / avg_interval_prev * 100) if avg_interval_prev > 0 else 0.0, 1
+    )
+    detection_rate_delta = round(detection_rate - prev_detection_rate, 1)
+
+    # ── Sessions ─────────────────────────────────────────────────────────────
+    sessions = db.query(models.Session).filter(models.Session.start_time >= start).all()
+    active_sess = db.query(models.Session).filter(models.Session.status == "active").first()
+    if active_sess and active_sess not in sessions:
+        sessions.append(active_sess)
+
+    total_session_seconds = 0.0
+    for sess in sessions:
+        s_start = _to_dt(sess.start_time)
+        s_end   = _to_dt(sess.end_time) if sess.end_time else now
+        if s_start is None:
+            continue
+        s_start = max(s_start, start)
+        s_end   = min(s_end, now)
+        dur = (s_end - s_start).total_seconds()
+        if dur > 0:
+            total_session_seconds += dur
+
+    session_hours = round(total_session_seconds / 3600, 1)
+    availability  = round(
+        min(100.0, total_session_seconds / planned_seconds * 100) if planned_seconds > 0 else 0.0, 1
+    )
+
+    # OEE breakdown
+    actual_rate = total_bags / (total_session_seconds / 3600) if total_session_seconds > 0 else 0.0
+    performance = round(min(100.0, actual_rate / TARGET_RATE * 100) if TARGET_RATE > 0 else 0.0, 1)
+    oee         = round((availability * performance * detection_rate) / 10000.0, 1)
+
+    # Stop time formatted
+    stop_secs = max(0.0, planned_seconds - total_session_seconds)
+    stop_h = int(stop_secs // 3600)
+    stop_m = int((stop_secs % 3600) // 60)
+    stop_s = int(stop_secs % 60)
+    stop_formatted = f"{stop_h:02d}:{stop_m:02d}:{stop_s:02d}"
+
+    oee_data = [
+        {"name": "Disponibilité", "value": availability, "color": "#22c55e"},
+        {"name": "Performance",   "value": performance,  "color": "#f97316"},
+        {"name": "Qualité",       "value": detection_rate, "color": "#3b82f6"},
+    ]
+
+    # ── Trend data (current vs previous, bucketed) ────────────────────────
+    DAY_NAMES = ["Lun", "Mar", "Mer", "Jeu", "Ven", "Sam", "Dim"]
+    if hours <= 24:
+        bucket_size, bucket_count = 1, 24
+    elif hours <= 168:
+        bucket_size, bucket_count = 24, 7
+    else:
+        bucket_size, bucket_count = 168, max(1, hours // 168)
+
+    trend_data = []
+    for i in range(bucket_count - 1, -1, -1):
+        b_start = now - _td(hours=(i + 1) * bucket_size)
+        b_end   = now - _td(hours=i * bucket_size)
+        pb_start = b_start - _td(hours=hours)
+        pb_end   = b_end   - _td(hours=hours)
+
+        if bucket_size >= 168:
+            label = f"S{b_start.strftime('%W')}"
+        elif bucket_size >= 24:
+            label = DAY_NAMES[b_start.weekday()]
+        else:
+            label = b_start.strftime("%H:%M")
+
+        cur_count = sum(
+            1 for l in conforming
+            if (ts := _to_dt(l.timestamp)) and b_start <= ts < b_end
+        )
+        prv_count = sum(
+            1 for l in prev_conforming
+            if (ts := _to_dt(l.timestamp)) and pb_start <= ts < pb_end
+        )
+        trend_data.append({"day": label, "current": cur_count, "previous": prv_count})
+
+    # ── Key analyses ─────────────────────────────────────────────────────────
+    peak_bucket = max(trend_data, key=lambda b: b["current"]) if trend_data else None
+
+    consistency = 0.0
+    if intervals and avg_interval > 0 and len(intervals) >= 2:
+        variance    = sum((x - avg_interval) ** 2 for x in intervals) / len(intervals)
+        cv          = _math.sqrt(variance) / avg_interval
+        consistency = max(0.0, round((1.0 - cv) * 100.0, 1))
+
+    return {
+        "totalBags":          total_bags,
+        "totalBagsPrev":      prev_total,
+        "bagsDeltaPct":       bags_delta_pct,
+        "avgInterval":        avg_interval,
+        "avgIntervalPrev":    avg_interval_prev,
+        "intervalDeltaPct":   interval_delta_pct,
+        "detectionRate":      detection_rate,
+        "detectionRatePrev":  prev_detection_rate,
+        "detectionRateDelta": detection_rate_delta,
+        "sessionHours":       session_hours,
+        "availability":       availability,
+        "oee":                oee,
+        "performance":        performance,
+        "stopTimeFormatted":  stop_formatted,
+        "trendData":          trend_data,
+        "oeeData":            oee_data,
+        "consistency":        consistency,
+        "peakBucket":         peak_bucket,
+        "period":             period,
+        "periodHours":        hours,
+    }
+
+
+@app.get("/api/reports/export/csv")
+async def export_production_csv(period: str = "week", db: Session = Depends(get_db)):
+    """Export DetectionLog entries for the period as a UTF-8 CSV file."""
+    from datetime import datetime as _dt, timedelta as _td
+    from fastapi.responses import StreamingResponse
+    import csv
+    import io
+
+    PERIOD_HOURS = {"day": 24, "week": 168, "month": 720}
+    hours = PERIOD_HOURS.get(period, 168)
+    start = _dt.utcnow() - _td(hours=hours)
+
+    logs = (
+        db.query(models.DetectionLog)
+        .filter(models.DetectionLog.timestamp >= start)
+        .order_by(models.DetectionLog.timestamp.asc())
+        .all()
+    )
+
+    buf = io.StringIO()
+    writer = csv.writer(buf)
+    writer.writerow([
+        "ID", "Timestamp", "Session", "Statut",
+        "Identifiant", "Score Détection", "Score Logo",
+        "Score Couleur", "Intervalle (s)", "Capture URL",
+    ])
+    for l in logs:
+        ts = l.timestamp.isoformat() if hasattr(l.timestamp, "isoformat") else str(l.timestamp)
+        writer.writerow([
+            l.id, ts, l.session_id, l.status,
+            l.identifier or "",
+            round(l.detection_score or 0, 4),
+            round(l.logo_score or 0, 4),
+            round(l.color_score or 0, 4),
+            round(l.interval or 0, 3),
+            l.capture_url or "",
+        ])
+
+    buf.seek(0)
+    fname = f"production_{period}_{_dt.utcnow().strftime('%Y%m%d_%H%M%S')}.csv"
+    return StreamingResponse(
+        iter([buf.getvalue()]),
+        media_type="text/csv; charset=utf-8",
+        headers={"Content-Disposition": f"attachment; filename={fname}"},
+    )
+
+
 # ─── Timeline ────────────────────────────────────────────────────────────────
 @app.get("/api/timeline/hourly")
 async def get_timeline_hourly(hours: int = 24, db: Session = Depends(get_db)):
