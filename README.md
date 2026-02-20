@@ -101,7 +101,7 @@ Suivi de l'intégration réelle (remplacement des données fictives par des appe
 | 5 | **Monitoring — Flux en Direct** | Fait | Streaming vidéo via WebSocket `/ws/video` (base64 JPEG). Hook `useVideoStream` réutilisable. FPS en temps réel. Reconnexion automatique. Support RTSP/HTTP/Webcam. |
 | 6 | **Production — Gestion des Sessions** | Fait | Sessions réelles connectées via API: démarrage/arrêt, session active, stats live et historique paginé (`GET /sessions/`, `POST /sessions/start`, `POST /sessions/stop/{id}`). |
 | 7 | **Production — Journal de Production** | Fait | Tableau branché sur `GET /api/logs/` avec pagination backend + filtres (statut, recherche identifiant), miniatures et ouverture capture. |
-| 8 | Production — Timeline | En attente | — |
+| 8 | **Production — Chronologie** | Fait | `GET /api/timeline/hourly?hours=N` : buckets horaires réels (sacs comptés, intervalle moyen, rejetés). Graphique combiné Bar+Line. Analyse des pics (max/min horaire). Boutons de sélection rapide : 6H / 24H / 3 jours. État vide et chargement gérés. |
 | 9 | **Qualité — Tableau de Bord** | Fait | Dashboard qualité branché sur `/api/quality/summary` avec distributions de confiance/logo calculées depuis les logs réels. |
 | 10 | **Qualité — Vérification Manuelle** | Fait | File de revue connectée (`GET /api/quality/manual-verification`) + action opérateur via `PATCH /api/logs/{id}` (Valider/Rejeter) + historique (`GET /api/quality/reviews`). |
 | 11 | **Qualité — Détection d'Anomalies** | Fait | Liste d'anomalies réelles depuis `/api/quality/anomalies` (rejets + scores faibles) avec miniatures snapshots backend. |
@@ -128,6 +128,7 @@ Suivi de l'intégration réelle (remplacement des données fictives par des appe
 | `POST` | `/api/models/activate` | Active un modèle par chemin, persistance BDD + hot-apply moteur |
 | `POST` | `/api/models/upload` | Upload d'un fichier `.pt` (multipart) vers `models/` |
 | `DELETE` | `/api/models/{filename}` | Supprime un `.pt` (refuse si modèle actif) |
+| `GET` | `/api/timeline/hourly` | Distribution horaire sur N dernières heures (`?hours=6\|24\|72`) : count, interval moyen, rejets par bucket + analyse des pics |
 | `GET` | `/api/config/camera` | Récupère la configuration caméra actuelle |
 | `PUT` | `/api/config/camera` | Sauvegarde la configuration caméra |
 | `POST` | `/api/config/camera/test` | Teste la connexion à la source vidéo (vérification réelle via OpenCV) |

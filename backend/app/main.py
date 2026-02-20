@@ -266,6 +266,79 @@ def _recompute_session_counters(db: Session, session_id: str):
 
 
 
+# ─── Timeline ────────────────────────────────────────────────────────────────
+@app.get("/api/timeline/hourly")
+async def get_timeline_hourly(hours: int = 24, db: Session = Depends(get_db)):
+    """Distribution horaire de production sur les N dernières heures (max 168h)."""
+    from datetime import datetime as _dt, timedelta as _td
+
+    hours = max(1, min(hours, 168))
+    now = _dt.utcnow()
+    start = now - _td(hours=hours)
+
+    logs = (
+        db.query(models.DetectionLog)
+        .filter(models.DetectionLog.timestamp >= start)
+        .order_by(models.DetectionLog.timestamp.asc())
+        .all()
+    )
+
+    # Normalisation timestamp
+    def _to_dt(ts):
+        if isinstance(ts, str):
+            try:
+                return _dt.fromisoformat(ts)
+            except Exception:
+                return None
+        return ts
+
+    # Groupement par bucket horaire
+    data = []
+    for i in range(hours - 1, -1, -1):
+        b_start = now - _td(hours=i + 1)
+        b_end   = now - _td(hours=i)
+        label   = b_start.strftime("%H:%M")
+
+        b_conformes = []
+        b_rejected  = 0
+        for log in logs:
+            ts = _to_dt(log.timestamp)
+            if ts is None or not (b_start <= ts < b_end):
+                continue
+            if log.status == "conforme":
+                b_conformes.append(ts)
+            elif log.status == "rejete":
+                b_rejected += 1
+
+        # Intervalle moyen dans le bucket
+        iv_list = []
+        for j in range(1, len(b_conformes)):
+            delta = (b_conformes[j] - b_conformes[j - 1]).total_seconds()
+            if 0 < delta < 120:
+                iv_list.append(delta)
+
+        data.append({
+            "time":     label,
+            "count":    len(b_conformes),
+            "interval": round(sum(iv_list) / len(iv_list), 2) if iv_list else 0.0,
+            "rejected": b_rejected,
+        })
+
+    # Analyse des pics (seulement les buckets non vides)
+    non_empty = [b for b in data if b["count"] > 0]
+    peak_max  = max(non_empty, key=lambda b: b["count"]) if non_empty else None
+    peak_min  = min(non_empty, key=lambda b: b["count"]) if non_empty else None
+
+    return {
+        "data":        data,
+        "peakMax":     peak_max,
+        "peakMin":     peak_min,
+        "totalBags":   sum(b["count"]    for b in data),
+        "totalRejected": sum(b["rejected"] for b in data),
+        "periodHours": hours,
+    }
+
+
 # ─── Dashboard ────────────────────────────────────────────────────────────────
 @app.get("/api/dashboard/summary")
 async def get_dashboard_summary(db: Session = Depends(get_db)):
