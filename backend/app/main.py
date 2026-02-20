@@ -535,16 +535,238 @@ async def get_alert_rules(db: Session = Depends(get_db)):
     return rules
 
 
-# ─── Analytics ────────────────────────────────────────────────────────────────
-@app.get("/api/analytics/performance")
-async def get_performance_analytics(db: Session = Depends(get_db)):
-    total = db.query(models.DetectionLog).count()
+# ─── Analytics / OEE ─────────────────────────────────────────────────────────
+@app.get("/api/analytics/oee")
+async def get_oee_analytics(hours: int = 24, db: Session = Depends(get_db)):
+    """OEE / TRS analytics computed from real DetectionLog & Session data."""
+    import math as _math
+    from datetime import datetime as _dt, timedelta as _td
+
+    hours = max(1, min(hours, 720))
+    now = _dt.utcnow()
+    start = now - _td(hours=hours)
+    prev_start = start - _td(hours=hours)
+    planned_seconds = hours * 3600
+    TARGET_RATE = 1100  # bags/hour theoretical max
+
+    def _to_dt(ts):
+        if isinstance(ts, str):
+            try:
+                return _dt.fromisoformat(ts)
+            except Exception:
+                return None
+        return ts
+
+    # ── Current period ──────────────────────────────────────────────────────
+    logs = (
+        db.query(models.DetectionLog)
+        .filter(models.DetectionLog.timestamp >= start)
+        .order_by(models.DetectionLog.timestamp.asc())
+        .all()
+    )
+    conforming = [l for l in logs if l.status == "conforme"]
+    rejected   = [l for l in logs if l.status == "rejete"]
+    total_bags     = len(conforming)
+    rejected_count = len(rejected)
+    total_inspected = total_bags + rejected_count
+
+    quality = round((total_bags / total_inspected * 100) if total_inspected > 0 else 100.0, 1)
+
+    # Sessions overlapping the period
+    sessions = db.query(models.Session).filter(
+        models.Session.start_time >= start
+    ).all()
+    active_sess = db.query(models.Session).filter(models.Session.status == "active").first()
+    if active_sess and active_sess not in sessions:
+        sessions.append(active_sess)
+
+    total_session_seconds = 0.0
+    for sess in sessions:
+        s_start = _to_dt(sess.start_time)
+        s_end   = _to_dt(sess.end_time) if sess.end_time else now
+        if s_start is None:
+            continue
+        s_start = max(s_start, start)
+        s_end   = min(s_end,   now)
+        dur = (s_end - s_start).total_seconds()
+        if dur > 0:
+            total_session_seconds += dur
+
+    availability = round(
+        min(100.0, total_session_seconds / planned_seconds * 100) if planned_seconds > 0 else 0.0, 1
+    )
+
+    actual_rate = total_bags / (total_session_seconds / 3600) if total_session_seconds > 0 else 0.0
+    performance = round(min(100.0, actual_rate / TARGET_RATE * 100) if TARGET_RATE > 0 else 0.0, 1)
+
+    oee = round((availability * performance * quality) / 10000.0, 1)
+
+    # ── Previous period OEE (for delta) ────────────────────────────────────
+    prev_logs = db.query(models.DetectionLog).filter(
+        models.DetectionLog.timestamp >= prev_start,
+        models.DetectionLog.timestamp < start,
+    ).all()
+    prev_conforming = [l for l in prev_logs if l.status == "conforme"]
+    prev_total      = len(prev_conforming)
+    prev_inspected  = prev_total + len([l for l in prev_logs if l.status == "rejete"])
+
+    prev_sessions = db.query(models.Session).filter(
+        models.Session.start_time >= prev_start,
+        models.Session.start_time <  start,
+    ).all()
+    prev_sess_secs = 0.0
+    for sess in prev_sessions:
+        s_start = _to_dt(sess.start_time)
+        s_end   = _to_dt(sess.end_time) if sess.end_time else start
+        if s_start is None:
+            continue
+        s_start = max(s_start, prev_start)
+        s_end   = min(s_end,   start)
+        dur = (s_end - s_start).total_seconds()
+        if dur > 0:
+            prev_sess_secs += dur
+
+    prev_quality      = (prev_total / prev_inspected * 100) if prev_inspected > 0 else 100.0
+    prev_availability = min(100.0, prev_sess_secs / planned_seconds * 100) if planned_seconds > 0 else 0.0
+    prev_actual_rate  = prev_total / (prev_sess_secs / 3600) if prev_sess_secs > 0 else 0.0
+    prev_performance  = min(100.0, prev_actual_rate / TARGET_RATE * 100) if TARGET_RATE > 0 else 0.0
+    prev_oee          = (prev_availability * prev_performance * prev_quality) / 10000.0
+    oee_delta = round(oee - prev_oee, 1)
+
+    # ── Hourly / bucketed chart data ────────────────────────────────────────
+    if hours <= 48:
+        bucket_hours = 1
+    elif hours <= 168:
+        bucket_hours = 4
+    else:
+        bucket_hours = 24
+
+    num_buckets = hours // bucket_hours
+    hourly_data = []
+    for i in range(num_buckets - 1, -1, -1):
+        b_start = now - _td(hours=(i + 1) * bucket_hours)
+        b_end   = now - _td(hours=i * bucket_hours)
+        if bucket_hours >= 24:
+            label = b_start.strftime("%d/%m")
+        elif bucket_hours > 1:
+            label = b_start.strftime("%d/%m %H:%M")
+        else:
+            label = b_start.strftime("%H:%M")
+
+        b_count = sum(
+            1 for l in conforming
+            if _to_dt(l.timestamp) and b_start <= _to_dt(l.timestamp) < b_end
+        )
+        hourly_data.append({"name": label, "real": b_count, "target": TARGET_RATE, "forecast": 0})
+
+    # Rolling 3-bucket forecast
+    for i, h in enumerate(hourly_data):
+        prev_vals = [hourly_data[j]["real"] for j in range(max(0, i - 3), i) if hourly_data[j]["real"] > 0]
+        h["forecast"] = round(sum(prev_vals) / len(prev_vals)) if prev_vals else h["real"]
+
+    # ── Downtime distribution ───────────────────────────────────────────────
+    all_ts = sorted(ts for l in logs if (ts := _to_dt(l.timestamp)) is not None)
+
+    production_secs    = 0.0
+    micro_stops_secs   = 0.0
+    technical_fail_secs = 0.0
+    for i in range(1, len(all_ts)):
+        delta = (all_ts[i] - all_ts[i - 1]).total_seconds()
+        if delta < 30:
+            production_secs    += delta
+        elif delta < 120:
+            micro_stops_secs   += delta
+        else:
+            technical_fail_secs += delta
+
+    if planned_seconds > 0:
+        prod_pct    = round(production_secs     / planned_seconds * 100, 1)
+        micro_pct   = round(micro_stops_secs    / planned_seconds * 100, 1)
+        failure_pct = round(technical_fail_secs / planned_seconds * 100, 1)
+        idle_pct    = max(0.0, round(100 - prod_pct - micro_pct - failure_pct, 1))
+    else:
+        prod_pct = micro_pct = failure_pct = idle_pct = 0.0
+
+    downtime_data = [
+        {"name": "Production",      "value": prod_pct,    "color": "#22c55e"},
+        {"name": "Micro-arrêts",    "value": micro_pct,   "color": "#eab308"},
+        {"name": "Panne Technique", "value": failure_pct, "color": "#ef4444"},
+        {"name": "Inactivité",      "value": idle_pct,    "color": "#6366f1"},
+    ]
+    total_stops_h = round((planned_seconds - production_secs) / 3600, 1)
+
+    # ── Recommendations ─────────────────────────────────────────────────────
+    intervals = []
+    for i in range(1, len(all_ts)):
+        d = (all_ts[i] - all_ts[i - 1]).total_seconds()
+        if 0 < d < 120:
+            intervals.append(d)
+
+    recommendations = []
+    if intervals:
+        avg_iv = sum(intervals) / len(intervals)
+        if len(intervals) >= 2:
+            variance = sum((x - avg_iv) ** 2 for x in intervals) / len(intervals)
+            cv = _math.sqrt(variance) / avg_iv if avg_iv > 0 else 0
+            if cv > 0.3:
+                recommendations.append({
+                    "type": "speed", "color": "orange",
+                    "title": "Vitesse Convoyeur",
+                    "text": (
+                        f"Coefficient de variation des intervalles : {cv*100:.0f}%. "
+                        f"Stabiliser la cadence pourrait améliorer la consistance "
+                        f"de {min(15, int(cv * 30))}%."
+                    ),
+                })
+
+    if total_inspected > 0 and rejected_count / total_inspected > 0.03:
+        recommendations.append({
+            "type": "quality", "color": "blue",
+            "title": "Taux de Rejet",
+            "text": (
+                f"{rejected_count} sacs rejetés "
+                f"({rejected_count / total_inspected * 100:.1f}% du total). "
+                f"Vérifier le positionnement caméra et le seuil de confiance du modèle."
+            ),
+        })
+
+    if availability < 80.0 and total_bags > 0:
+        recommendations.append({
+            "type": "maintenance", "color": "red",
+            "title": "Disponibilité Faible",
+            "text": (
+                f"Disponibilité à {availability}% sur la période. "
+                f"Augmenter la durée des sessions de production actives."
+            ),
+        })
+
+    defaults = [
+        {"type": "speed", "color": "orange", "title": "Vitesse Convoyeur",
+         "text": "Débit stable sur la période analysée. Aucun ajustement de vitesse nécessaire."},
+        {"type": "maintenance", "color": "blue", "title": "Maintenance Prédictive",
+         "text": "Aucune anomalie de cadence détectée. Prochain entretien selon le calendrier prévu."},
+        {"type": "quality", "color": "green", "title": "Qualité de Donnée",
+         "text": f"Taux de conformité à {quality}%. Les conditions de détection sont optimales."},
+    ]
+    while len(recommendations) < 3:
+        recommendations.append(defaults[len(recommendations) % len(defaults)])
+
     return {
-        "availability": 98.5,
-        "performance": 92.1,
-        "quality": 99.2,
-        "oee": 90.0,
-        "totalCount": total
+        "oee":              oee,
+        "oeeDelta":         oee_delta,
+        "availability":     availability,
+        "performance":      performance,
+        "quality":          quality,
+        "totalBags":        total_bags,
+        "rejectedBags":     rejected_count,
+        "targetRatePerHour": TARGET_RATE,
+        "actualRatePerHour": round(actual_rate, 1),
+        "sessionHours":     round(total_session_seconds / 3600, 1),
+        "hourlyData":       hourly_data,
+        "downtimeData":     downtime_data,
+        "totalStopsHours":  total_stops_h,
+        "recommendations":  recommendations,
+        "periodHours":      hours,
     }
 
 

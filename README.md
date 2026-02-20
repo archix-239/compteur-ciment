@@ -113,7 +113,7 @@ Suivi de l'intégration réelle (remplacement des données fictives par des appe
 | 17 | Administration — Paramètres Système | En attente | — |
 | 18 | Administration — Appareils | En attente | — |
 | 19 | Administration — API | En attente | — |
-| 20 | Analytique — Performance | En attente | — |
+| 20 | **Analytique — Performance (OEE)** | Fait | `GET /api/analytics/oee?hours=N` : OEE/TRS calculé depuis la BDD (disponibilité sessions, performance vs cible 1 100 sacs/h, qualité conformes/total). Sélecteur de période 6H / 24H / 7J / 30J. Graphique production réel + forecast (moyenne mobile 3 buckets) + cible. Camembert répartition du temps (production/micro-arrêts/pannes/inactivité). Recommandations IA dynamiques. Icônes `?` avec tooltip explicatif sur chaque indicateur. |
 | 21 | Maintenance — Santé Système | En attente | — |
 | 22 | Maintenance — Base de Données | En attente | — |
 | 23 | Maintenance — Diagnostics | En attente | — |
@@ -129,6 +129,7 @@ Suivi de l'intégration réelle (remplacement des données fictives par des appe
 | `POST` | `/api/models/upload` | Upload d'un fichier `.pt` (multipart) vers `models/` |
 | `DELETE` | `/api/models/{filename}` | Supprime un `.pt` (refuse si modèle actif) |
 | `GET` | `/api/timeline/hourly` | Distribution horaire sur N dernières heures (`?hours=6\|24\|72`) : count, interval moyen, rejets par bucket + analyse des pics |
+| `GET` | `/api/analytics/oee` | OEE complet (`?hours=6\|24\|168\|720`) : oee, oeeDelta, availability, performance, quality, hourlyData (buckets adaptatifs), downtimeData (pie répartition), recommendations IA dynamiques |
 | `GET` | `/api/config/camera` | Récupère la configuration caméra actuelle |
 | `PUT` | `/api/config/camera` | Sauvegarde la configuration caméra |
 | `POST` | `/api/config/camera/test` | Teste la connexion à la source vidéo (vérification réelle via OpenCV) |
