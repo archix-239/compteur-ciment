@@ -269,17 +269,137 @@ def _recompute_session_counters(db: Session, session_id: str):
 # ─── Dashboard ────────────────────────────────────────────────────────────────
 @app.get("/api/dashboard/summary")
 async def get_dashboard_summary(db: Session = Depends(get_db)):
+    import math as _math
+    from datetime import datetime as _dt, timedelta as _td
+
+    now = _dt.utcnow()
+
     active_session = db.query(models.Session).filter(models.Session.status == "active").first()
     total_bags = db.query(models.DetectionLog).filter(models.DetectionLog.status == "conforme").count()
     rejected_bags = db.query(models.DetectionLog).filter(models.DetectionLog.status == "rejete").count()
+
+    # Logs conformes de la session active, triés chronologiquement
+    if active_session:
+        session_logs = (
+            db.query(models.DetectionLog)
+            .filter(
+                models.DetectionLog.session_id == active_session.id,
+                models.DetectionLog.status == "conforme",
+            )
+            .order_by(models.DetectionLog.timestamp.asc())
+            .all()
+        )
+    else:
+        session_logs = []
+
+    # Normalisation des timestamps (string ISO ou datetime)
+    timestamps = []
+    for log in session_logs:
+        ts = log.timestamp
+        if isinstance(ts, str):
+            try:
+                ts = _dt.fromisoformat(ts)
+            except Exception:
+                continue
+        timestamps.append(ts)
+
+    # Intervalles entre sacs consécutifs (on ignore les pauses > 120s)
+    ts_intervals: list[tuple] = []  # (timestamp_du_sac_précédent, durée)
+    for i in range(1, len(timestamps)):
+        delta = (timestamps[i] - timestamps[i - 1]).total_seconds()
+        if 0 < delta < 120:
+            ts_intervals.append((timestamps[i - 1], delta))
+
+    all_iv = [iv for _, iv in ts_intervals]
+    avg_interval = sum(all_iv) / len(all_iv) if all_iv else 0.0
+
+    # Taux de production : sacs dans les 5 dernières minutes
+    cutoff_5min = now - _td(minutes=5)
+    recent_count = sum(1 for ts in timestamps if ts >= cutoff_5min)
+    production_rate = round(recent_count / 5.0, 2)
+
+    # Consistance : 100 × (1 − CV), CV = σ/μ
+    if len(all_iv) >= 2 and avg_interval > 0:
+        variance = sum((x - avg_interval) ** 2 for x in all_iv) / len(all_iv)
+        stddev = _math.sqrt(variance)
+        cv = stddev / avg_interval
+        consistency = max(0.0, round((1.0 - cv) * 100.0, 1))
+        stddev_val = round(stddev, 2)
+    else:
+        stddev_val = 0.0
+        consistency = 100.0
+
+    # Première / deuxième moitié de session
+    if len(all_iv) >= 4:
+        mid = len(all_iv) // 2
+        fh = all_iv[:mid]
+        sh = all_iv[mid:]
+        first_half_interval = round(sum(fh) / len(fh), 2)
+        second_half_interval = round(sum(sh) / len(sh), 2)
+        slowdown_pct = (
+            round(((second_half_interval - first_half_interval) / first_half_interval) * 100.0, 1)
+            if first_half_interval > 0 else 0.0
+        )
+    else:
+        first_half_interval = round(avg_interval, 2)
+        second_half_interval = round(avg_interval, 2)
+        slowdown_pct = 0.0
+
+    # Graphique intervalles : buckets par minute sur les 14 dernières minutes
+    interval_data = []
+    for i in range(13, -1, -1):
+        b_start = now - _td(minutes=i + 1)
+        b_end = now - _td(minutes=i)
+        label = f"{b_start.hour}:{str(b_start.minute).zfill(2)}"
+        b_iv = [iv for ts, iv in ts_intervals if b_start <= ts < b_end]
+        if b_iv:
+            interval_data.append({
+                "time": label,
+                "avgInterval": round(sum(b_iv) / len(b_iv), 2),
+                "minInterval": round(min(b_iv), 2),
+                "maxInterval": round(max(b_iv), 2),
+            })
+        else:
+            interval_data.append({"time": label, "avgInterval": 0, "minInterval": 0, "maxInterval": 0})
+
+    # Heatmap : 6 buckets de 5 secondes (dernières 30s)
+    heatmap_data = []
+    for i in range(5, -1, -1):
+        b_start = now - _td(seconds=(i + 1) * 5)
+        b_end = now - _td(seconds=i * 5)
+        count = sum(1 for ts in timestamps if b_start <= ts < b_end)
+        level = "none" if count == 0 else "low" if count < 2 else "medium" if count < 4 else "high"
+        heatmap_data.append({"time": f"{(5 - i) * 5}s", "activity": {"level": level, "count": count}})
+
+    # Production gaps : intervalles > 2× la moyenne
+    production_gaps = []
+    if avg_interval > 0 and len(timestamps) >= 2:
+        for i in range(1, len(timestamps)):
+            delta = (timestamps[i] - timestamps[i - 1]).total_seconds()
+            if delta > 2 * avg_interval:
+                deviation_pct = int(((delta - avg_interval) / avg_interval) * 100)
+                production_gaps.append({
+                    "id": str(i),
+                    "bagRange": f"#{i} → #{i + 1}",
+                    "duration": f"{delta:.2f}s",
+                    "time": timestamps[i - 1].strftime("%H:%M"),
+                    "deviation": deviation_pct,
+                })
 
     return {
         "totalBags": total_bags,
         "rejectedBags": rejected_bags,
         "activeSessionId": active_session.id if active_session else None,
-        "productionRate": 28.4,
-        "avgInterval": 2.21,
-        "consistency": 85.0
+        "productionRate": production_rate,
+        "avgInterval": round(avg_interval, 2),
+        "consistency": consistency,
+        "stddev": stddev_val,
+        "firstHalfInterval": first_half_interval,
+        "secondHalfInterval": second_half_interval,
+        "slowdownPercent": slowdown_pct,
+        "intervalData": interval_data,
+        "heatmapData": heatmap_data,
+        "productionGaps": production_gaps,
     }
 
 

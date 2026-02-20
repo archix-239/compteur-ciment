@@ -93,8 +93,9 @@ Suivi de l'intégration réelle (remplacement des données fictives par des appe
 
 | # | Interface | Statut | Détails |
 |---|-----------|--------|---------|
+| 0 | **Tableau de Bord** | Fait | `GET /api/dashboard/summary` retourne toutes les métriques calculées depuis la BDD : totalBags, productionRate (5 min glissantes), avgInterval, consistency (1−CV), stddev, firstHalfInterval, secondHalfInterval, slowdownPercent, intervalData (14 buckets/min), heatmapData (6×5s), productionGaps (écarts > 2×moy). Bouton Actualiser connecté. Données temps réel via WebSocket `COUNT_EVENT`. |
 | 1 | **Configuration — Paramètres Caméra** | Fait | GET/PUT `/api/config/camera`, POST `/api/config/camera/test` (test réel OpenCV). Formulaire connecté, sauvegarde en BDD, test de connexion caméra fonctionnel. Preview WebSocket vidéo. |
-| 2 | **Configuration — Modèle IA** | Fait | GET/PUT `/api/config/model` connecté au frontend. Paramètres (modèle, seuil confiance, NMS, max det, imgsz, tracking persist) persistés en BDD et appliqués à chaud au moteur vision. |
+| 2 | **Configuration — Modèle IA** | Fait | GET/PUT `/api/config/model` connecté au frontend. Paramètres (modèle, seuil confiance, NMS, max det, imgsz, tracking persist) persistés en BDD et appliqués à chaud au moteur vision. Upload `.pt` via `POST /api/models/upload`, activation via `POST /api/models/activate`, suppression via `DELETE /api/models/{filename}`. |
 | 3 | **Configuration — Ligne Virtuelle** | Fait | GET/PUT `/api/config/virtual-line` connecté. Position, largeur et direction persistées et appliquées en temps réel à la logique de franchissement de ligne. |
 | 4 | Configuration — Templates | En attente | — |
 | 5 | **Monitoring — Flux en Direct** | Fait | Streaming vidéo via WebSocket `/ws/video` (base64 JPEG). Hook `useVideoStream` réutilisable. FPS en temps réel. Reconnexion automatique. Support RTSP/HTTP/Webcam. |
@@ -122,6 +123,11 @@ Suivi de l'intégration réelle (remplacement des données fictives par des appe
 
 | Méthode | Endpoint | Description |
 |---------|----------|-------------|
+| `GET` | `/api/dashboard/summary` | KPI dashboard complets : comptages, taux de production, intervalles, consistance, graphiques intervalles/heatmap, production gaps — tout calculé depuis la BDD |
+| `GET` | `/api/models/list` | Liste les fichiers `.pt` dans `models/` avec tailles et modèle actif |
+| `POST` | `/api/models/activate` | Active un modèle par chemin, persistance BDD + hot-apply moteur |
+| `POST` | `/api/models/upload` | Upload d'un fichier `.pt` (multipart) vers `models/` |
+| `DELETE` | `/api/models/{filename}` | Supprime un `.pt` (refuse si modèle actif) |
 | `GET` | `/api/config/camera` | Récupère la configuration caméra actuelle |
 | `PUT` | `/api/config/camera` | Sauvegarde la configuration caméra |
 | `POST` | `/api/config/camera/test` | Teste la connexion à la source vidéo (vérification réelle via OpenCV) |

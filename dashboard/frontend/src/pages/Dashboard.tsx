@@ -17,14 +17,25 @@ import {
 
 /**
  * Dashboard Page
- * Main production monitoring interface
+ * Main production monitoring interface — all data from /api/dashboard/summary
  * Design: Minimalisme Industriel - Dark theme with orange accents
  */
 
 export default function Dashboard() {
-  const { metrics, intervalData, heatmapData, productionGaps } = useProductionData();
+  const { metrics, intervalData, heatmapData, productionGaps, refresh } = useProductionData();
 
-  const { totalBags, productionRate, avgInterval, consistency, firstHalfInterval, secondHalfInterval, slowdownPercent } = metrics;
+  const {
+    totalBags, productionRate, avgInterval, consistency, stddev,
+    firstHalfInterval, secondHalfInterval, slowdownPercent,
+  } = metrics;
+
+  // Durée estimée du flux = total sacs × intervalle moyen
+  const fluxDuration = avgInterval > 0 ? (totalBags * avgInterval).toFixed(1) : '0.0';
+
+  // Tendance du débit basée sur la comparaison 1re/2e moitié
+  const productionTrend = slowdownPercent !== 0
+    ? { value: Math.abs(slowdownPercent), direction: slowdownPercent < 0 ? 'up' : 'down' as 'up' | 'down' }
+    : undefined;
 
   return (
     <div className="min-h-screen bg-background p-6 space-y-8">
@@ -36,10 +47,10 @@ export default function Dashboard() {
           <div className="text-[10px] text-zinc-500 uppercase font-bold tracking-widest mb-1">Status Actuel</div>
           <div className="text-xs text-green-400 font-medium flex items-center gap-2">
             <div className="w-1.5 h-1.5 rounded-full bg-green-500 animate-pulse" />
-            {totalBags} sacs détectés — {(totalBags * 2.21).toFixed(1)}s de flux
+            {totalBags} sacs détectés — {fluxDuration}s de flux
           </div>
         </div>
-        <Button variant="outline" className="border-zinc-800 text-white gap-2">
+        <Button variant="outline" className="border-zinc-800 text-white gap-2" onClick={refresh}>
           <RefreshCw className="w-4 h-4" /> Actualiser
         </Button>
         <Button className="bg-orange-600 hover:bg-orange-700 text-white gap-2">
@@ -64,7 +75,7 @@ export default function Dashboard() {
             unit="sacs / minute"
             description="Vitesse moyenne de passage des sacs sur le convoyeur (moyenne glissante 5 min)."
             icon={<Zap className="w-5 h-5" />}
-            trend={{ value: 5, direction: 'up' }}
+            trend={productionTrend}
           />
           <StatCard
             title="Intervalle Moyen"
@@ -79,7 +90,6 @@ export default function Dashboard() {
             unit="coefficient de variation"
             description="Indice de régularité du flux. Plus il est proche de 100%, plus le flux est stable."
             icon={<TrendingUp className="w-5 h-5" />}
-            trend={{ value: 8, direction: 'down' }}
           />
         </div>
 
@@ -108,7 +118,9 @@ export default function Dashboard() {
               </BarChart>
             </ResponsiveContainer>
             <div className="text-xs text-muted-foreground mt-4 text-center">
-              moyenne 2.21s — affichage de la variation min/max
+              {avgInterval > 0
+                ? `moyenne ${avgInterval.toFixed(2)}s — affichage de la variation min/max`
+                : 'Aucune donnée — démarrez une session pour voir les intervalles'}
             </div>
           </div>
 
@@ -121,30 +133,36 @@ export default function Dashboard() {
               <div>
                 <div className="text-xs text-muted-foreground mb-3">Sacs</div>
                 <div className="flex gap-2 flex-wrap">
-                  {heatmapData.map((bucket, idx) => (
-                    <div
-                      key={idx}
-                      className={`
-                        w-10 h-10 rounded transition-all duration-200
-                        ${
-                          bucket.activity.level === 'none'
-                            ? 'bg-gray-700'
-                            : bucket.activity.level === 'low'
-                              ? 'bg-yellow-600'
-                              : bucket.activity.level === 'medium'
-                                ? 'bg-yellow-500'
-                                : 'bg-yellow-400'
-                        }
-                        hover:ring-2 hover:ring-orange-500 cursor-pointer
-                        flex items-center justify-center font-mono text-sm font-bold
-                      `}
-                      title={`${bucket.time}: ${bucket.activity.count} sacs`}
-                    >
-                      {bucket.activity.count > 0 && (
-                        <span className="text-gray-900">{bucket.activity.count}</span>
-                      )}
+                  {heatmapData.length === 0 ? (
+                    <div className="text-xs text-muted-foreground py-4">
+                      Aucune donnée — démarrez une session
                     </div>
-                  ))}
+                  ) : (
+                    heatmapData.map((bucket, idx) => (
+                      <div
+                        key={idx}
+                        className={`
+                          w-10 h-10 rounded transition-all duration-200
+                          ${
+                            bucket.activity.level === 'none'
+                              ? 'bg-gray-700'
+                              : bucket.activity.level === 'low'
+                                ? 'bg-yellow-600'
+                                : bucket.activity.level === 'medium'
+                                  ? 'bg-yellow-500'
+                                  : 'bg-yellow-400'
+                          }
+                          hover:ring-2 hover:ring-orange-500 cursor-pointer
+                          flex items-center justify-center font-mono text-sm font-bold
+                        `}
+                        title={`${bucket.time}: ${bucket.activity.count} sacs`}
+                      >
+                        {bucket.activity.count > 0 && (
+                          <span className="text-gray-900">{bucket.activity.count}</span>
+                        )}
+                      </div>
+                    ))
+                  )}
                 </div>
               </div>
 
@@ -206,9 +224,19 @@ export default function Dashboard() {
               </div>
 
               <div className="pt-6 border-t border-border">
-                <div className="text-red-400 font-medium text-sm">
-                  La production est {slowdownPercent}% plus lente en deuxième moitié
-                </div>
+                {slowdownPercent === 0 ? (
+                  <div className="text-zinc-400 font-medium text-sm">
+                    Pas encore assez de données pour comparer les deux moitiés
+                  </div>
+                ) : slowdownPercent > 0 ? (
+                  <div className="text-red-400 font-medium text-sm">
+                    La production est {slowdownPercent}% plus lente en deuxième moitié
+                  </div>
+                ) : (
+                  <div className="text-green-400 font-medium text-sm">
+                    La production est {Math.abs(slowdownPercent)}% plus rapide en deuxième moitié
+                  </div>
+                )}
               </div>
 
               <div className="space-y-2">
@@ -220,7 +248,9 @@ export default function Dashboard() {
                   />
                 </div>
                 <div className="text-xs text-muted-foreground mt-1">
-                  σ = 1.3s ({consistency}% de variation)
+                  {stddev > 0
+                    ? `σ = ${stddev}s — ${consistency}% de consistance`
+                    : `${consistency}% de consistance`}
                 </div>
               </div>
             </div>
