@@ -1,4 +1,4 @@
-from fastapi import FastAPI, Depends, HTTPException, status, Response, WebSocket, WebSocketDisconnect
+from fastapi import FastAPI, Depends, HTTPException, status, Response, WebSocket, WebSocketDisconnect, UploadFile, File
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.security import OAuth2PasswordRequestForm
 from fastapi.staticfiles import StaticFiles
@@ -674,6 +674,91 @@ def _test_camera_sync(config: schemas.CameraConfig) -> dict:
         if engine_was_running:
             print("INFO: Redémarrage du moteur de vision après test caméra")
             v_engine.start()
+
+
+# ─── Available Models ────────────────────────────────────────────────────────
+
+@app.get("/api/models/list")
+async def list_available_models():
+    """Liste les fichiers .pt disponibles dans le dossier models/."""
+    import os as _os
+    models_dir = "models"
+    v_engine = vision_engine.get_vision_engine()
+    active_path = v_engine.model_path
+    if not _os.path.isdir(models_dir):
+        return {"models": [], "active_model": active_path}
+    result = []
+    for fname in sorted(_os.listdir(models_dir)):
+        if not fname.endswith(".pt"):
+            continue
+        fpath = f"models/{fname}"
+        try:
+            size_mb = round(_os.path.getsize(fpath) / (1024 * 1024), 1)
+        except OSError:
+            size_mb = 0.0
+        result.append({
+            "path": fpath,
+            "filename": fname,
+            "size_mb": size_mb,
+            "is_active": fpath == active_path,
+        })
+    return {"models": result, "active_model": active_path}
+
+
+@app.post("/api/models/activate")
+async def activate_model(payload: dict, db: Session = Depends(get_db)):
+    """Bascule le modèle actif sur le chemin fourni et l'applique à chaud."""
+    import os as _os
+    model_path = (payload.get("model_path") or "").strip()
+    if not model_path:
+        raise HTTPException(status_code=400, detail="model_path requis")
+    if not _os.path.isfile(model_path):
+        raise HTTPException(status_code=404, detail=f"Modèle introuvable : {model_path}")
+    setting = db.query(models.SystemSetting).filter(models.SystemSetting.key == "detection_model_path").first()
+    if setting:
+        setting.value = model_path
+    else:
+        db.add(models.SystemSetting(key="detection_model_path", value=model_path))
+    db.commit()
+    v_engine = vision_engine.get_vision_engine()
+    v_engine.apply_model_config(model_path=model_path)
+    return {"activated": model_path, "message": f"Modèle basculé vers {model_path}"}
+
+
+@app.post("/api/models/upload")
+async def upload_model(file: UploadFile = File(...)):
+    """Reçoit un fichier .pt et le sauvegarde dans le dossier models/."""
+    import os as _os
+    import shutil as _shutil
+    if not file.filename or not file.filename.endswith(".pt"):
+        raise HTTPException(status_code=400, detail="Seuls les fichiers .pt sont acceptés.")
+    safe_name = _os.path.basename(file.filename)
+    if not safe_name:
+        raise HTTPException(status_code=400, detail="Nom de fichier invalide.")
+    models_dir = "models"
+    _os.makedirs(models_dir, exist_ok=True)
+    dest = _os.path.join(models_dir, safe_name)
+    with open(dest, "wb") as f:
+        _shutil.copyfileobj(file.file, f)
+    size_mb = round(_os.path.getsize(dest) / (1024 * 1024), 1)
+    return {"path": f"models/{safe_name}", "filename": safe_name, "size_mb": size_mb}
+
+
+@app.delete("/api/models/{filename}")
+async def delete_model(filename: str):
+    """Supprime un fichier .pt du dossier models/. Refuse si c'est le modèle actif."""
+    import os as _os
+    safe_name = _os.path.basename(filename)
+    if not safe_name.endswith(".pt"):
+        raise HTTPException(status_code=400, detail="Seuls les fichiers .pt peuvent être supprimés.")
+    fpath = f"models/{safe_name}"
+    v_engine = vision_engine.get_vision_engine()
+    if fpath == v_engine.model_path:
+        raise HTTPException(status_code=409, detail="Impossible de supprimer le modèle actuellement actif.")
+    if not _os.path.isfile(fpath):
+        raise HTTPException(status_code=404, detail=f"Modèle introuvable : {fpath}")
+    _os.remove(fpath)
+    return {"deleted": fpath}
 
 
 # ─── IA Model Configuration ──────────────────────────────────────────────────
