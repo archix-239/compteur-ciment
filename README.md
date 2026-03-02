@@ -110,7 +110,7 @@ Suivi de l'intégration réelle (remplacement des données fictives par des appe
 | 14 | Rapports — Export de Données | En attente | — |
 | 15 | Rapports — Piste d'Audit | En attente | — |
 | 16 | Administration — Utilisateurs | En attente | — |
-| 17 | Administration — Paramètres Système | En attente | — |
+| 17 | **Administration — Paramètres Système** | Partiel | `GET/PUT /api/system/general-settings` : identité site, fuseau, langue, préférences notifications, niveau log, rétention. Onglet **Alertes** connecté : canaux (son, email, Slack, téléphone superviseur) via `GET/PUT /api/alerts/settings` + aperçu des règles avec toggle via `PUT /api/alerts/rules/{id}`. Tooltips `?` sur chaque paramètre. *(Sécurité et Backup restent UI statique.)* |
 | 18 | Administration — Appareils | En attente | — |
 | 19 | Administration — API | En attente | — |
 | 20 | **Analytique — Performance (OEE)** | Fait | `GET /api/analytics/oee?hours=N` : OEE/TRS calculé depuis la BDD (disponibilité sessions, performance vs cible 1 100 sacs/h, qualité conformes/total). Sélecteur de période 6H / 24H / 7J / 30J. Graphique production réel + forecast (moyenne mobile 3 buckets) + cible. Camembert répartition du temps (production/micro-arrêts/pannes/inactivité). Recommandations IA dynamiques. Icônes `?` avec tooltip explicatif sur chaque indicateur. |
@@ -141,6 +141,10 @@ Suivi de l'intégration réelle (remplacement des données fictives par des appe
 | `PUT` | `/api/alerts/settings` | Sauvegarde les paramètres de notification |
 | `GET` | `/api/alerts/unread-count` | Nombre d'alertes non lues (pour badge Sidebar) |
 | `POST` | `/api/alerts/evaluate` | Évalue les règles actives vs métriques récentes, crée des alertes si déclenchées |
+| `POST` | `/api/alerts/rules` | Crée une nouvelle règle d'alerte (name, type, threshold, is_active) |
+| `DELETE` | `/api/alerts/rules/{id}` | Supprime une règle d'alerte |
+| `GET` | `/api/system/general-settings` | Paramètres généraux du site (nom, localisation, fuseau, langue, notifications, logs) |
+| `PUT` | `/api/system/general-settings` | Sauvegarde les paramètres généraux |
 | `GET` | `/api/analytics/oee` | OEE complet (`?hours=6\|24\|168\|720`) : oee, oeeDelta, availability, performance, quality, hourlyData (buckets adaptatifs), downtimeData (pie répartition), recommendations IA dynamiques |
 | `GET` | `/api/reports/production` | Rapport de production (`?period=day\|week\|month`) : KPI + deltas vs période précédente, trendData comparaison, oeeData (Disponibilité/Performance/Qualité), peak bucket, consistance |
 | `GET` | `/api/reports/export/csv` | Export CSV des logs de détection de la période (`?period=day\|week\|month`) : ID, timestamp, session, statut, scores, intervalle, capture URL |

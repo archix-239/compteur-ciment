@@ -988,6 +988,73 @@ async def evaluate_alert_rules(db: Session = Depends(get_db)):
     return {"triggered": len(triggered), "alerts": triggered}
 
 
+@app.post("/api/alerts/rules")
+async def create_alert_rule(payload: schemas.AlertRuleBase, db: Session = Depends(get_db)):
+    rule = models.AlertRule(
+        name=payload.name,
+        type=payload.type,
+        threshold=payload.threshold,
+        is_active=payload.is_active,
+    )
+    db.add(rule)
+    db.commit()
+    db.refresh(rule)
+    return {"id": rule.id, "name": rule.name, "type": rule.type, "threshold": rule.threshold, "is_active": rule.is_active}
+
+
+@app.delete("/api/alerts/rules/{rule_id}")
+async def delete_alert_rule(rule_id: int, db: Session = Depends(get_db)):
+    rule = db.query(models.AlertRule).filter(models.AlertRule.id == rule_id).first()
+    if not rule:
+        raise HTTPException(status_code=404, detail="Règle introuvable")
+    db.delete(rule)
+    db.commit()
+    return {"ok": True}
+
+
+# ─── System General Settings ──────────────────────────────────────────────────
+
+_GENERAL_SETTING_KEYS = [
+    "site_name", "site_location", "site_timezone", "site_language",
+    "notify_low_production", "notify_weekly_reports",
+    "log_level", "log_retention_days",
+]
+
+_GENERAL_DEFAULTS: dict = {
+    "site_name": "Cimenterie Centrale - Ligne A",
+    "site_location": "Zone Industrielle Nord, Secteur 4",
+    "site_timezone": "utc1",
+    "site_language": "fr",
+    "notify_low_production": "true",
+    "notify_weekly_reports": "true",
+    "log_level": "info",
+    "log_retention_days": "30",
+}
+
+
+@app.get("/api/system/general-settings")
+async def get_general_settings(db: Session = Depends(get_db)):
+    rows = db.query(models.SystemSetting).filter(
+        models.SystemSetting.key.in_(_GENERAL_SETTING_KEYS)
+    ).all()
+    s = {r.key: r.value for r in rows}
+    return {k: s.get(k, _GENERAL_DEFAULTS[k]) for k in _GENERAL_SETTING_KEYS}
+
+
+@app.put("/api/system/general-settings")
+async def update_general_settings(payload: dict, db: Session = Depends(get_db)):
+    for key, value in payload.items():
+        if key not in _GENERAL_SETTING_KEYS:
+            continue
+        row = db.query(models.SystemSetting).filter(models.SystemSetting.key == key).first()
+        if row:
+            row.value = str(value)
+        else:
+            db.add(models.SystemSetting(key=key, value=str(value)))
+    db.commit()
+    return {"ok": True}
+
+
 # ─── Analytics / OEE ─────────────────────────────────────────────────────────
 @app.get("/api/analytics/oee")
 async def get_oee_analytics(hours: int = 24, db: Session = Depends(get_db)):

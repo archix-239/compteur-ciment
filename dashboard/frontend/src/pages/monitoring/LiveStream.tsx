@@ -1,11 +1,20 @@
 import { useState, useEffect, useRef } from 'react';
 import { API_URL, WS_URL } from '@/lib/api';
 import { useVideoStream } from '@/hooks/useVideoStream';
-import { Camera, Activity, Shield, AlertCircle, Maximize2, RefreshCcw } from 'lucide-react';
+import { Camera, Activity, AlertCircle, Maximize2, RefreshCcw, AlertOctagon, Zap, Bell, Loader2 } from 'lucide-react';
 import { Card } from '@/components/ui/card';
 import { Button } from '@/components/ui/button';
 import { PageHeader } from '@/components/PageHeader';
 import { StatusBadge } from '@/components/StatusBadge';
+
+interface AlertItem {
+  id: number;
+  title: string;
+  message: string;
+  alert_type: 'critical' | 'warning' | 'info';
+  is_read: boolean;
+  timestamp: string;
+}
 
 interface RuntimeInfo {
   camera_name: string;
@@ -24,6 +33,8 @@ export default function LiveStream() {
   const { status: streamStatus, fps, reconnect } = useVideoStream(imgRef, true);
 
   const [runtime, setRuntime] = useState<RuntimeInfo | null>(null);
+  const [recentAlerts, setRecentAlerts] = useState<AlertItem[]>([]);
+  const [alertsLoading, setAlertsLoading] = useState(true);
   const [stats, setStats] = useState({
     latency: 0,
     detectedObjects: 0,
@@ -41,6 +52,16 @@ export default function LiveStream() {
         setStats(prev => ({ ...prev, verifiedBags: data.totalBags, rejectedBags: data.rejectedBags }));
       })
       .catch(() => {});
+
+    // ── Alertes récentes ────────────────────────────────────────────────────
+    const loadAlerts = () => {
+      fetch(`${API_URL}/api/alerts/history?limit=3`)
+        .then(r => r.json())
+        .then(data => { setRecentAlerts(data); setAlertsLoading(false); })
+        .catch(() => setAlertsLoading(false));
+    };
+    loadAlerts();
+    const alertsTimer = setInterval(loadAlerts, 30_000);
 
     const loadRuntime = () => {
       fetch(`${API_URL}/api/config/runtime`)
@@ -96,6 +117,7 @@ export default function LiveStream() {
       ws.close();
       clearInterval(runtimeTimer);
       clearInterval(sessionTimer);
+      clearInterval(alertsTimer);
     };
   }, []);
 
@@ -209,19 +231,61 @@ export default function LiveStream() {
             </div>
           </Card>
 
-          <Card className="p-4 space-y-4 border-red-500/20 bg-red-500/5">
-            <div className="flex items-center gap-2 font-semibold text-red-400"><AlertCircle className="w-4 h-4" /><span>Alertes Récentes</span></div>
-            <div className="space-y-3">
-              <div className="text-xs border-l-2 border-red-500 pl-2 py-1">
-                <div className="font-medium text-red-300">Code QR manquant</div>
-                <div className="text-red-400/60">Dernier rejet</div>
-              </div>
-              <div className="text-xs border-l-2 border-yellow-500 pl-2 py-1">
-                <div className="font-medium text-yellow-300">Variation d'éclairage</div>
-                <div className="text-yellow-400/60">Surveillez la zone convoyeur</div>
-              </div>
+          <Card className="p-4 space-y-3 border-red-500/20 bg-red-500/5">
+            <div className="flex items-center gap-2 font-semibold text-red-400">
+              <AlertCircle className="w-4 h-4" />
+              <span>Alertes Récentes</span>
+              {recentAlerts.filter(a => !a.is_read).length > 0 && (
+                <span className="ml-auto text-[9px] font-bold bg-orange-500 text-white px-1.5 py-0.5 rounded-full">
+                  {recentAlerts.filter(a => !a.is_read).length}
+                </span>
+              )}
             </div>
-            <Button variant="ghost" className="w-full text-[10px] text-zinc-500 hover:text-white" size="sm">VOIR TOUTES LES ALERTES</Button>
+            <div className="space-y-2 min-h-[60px]">
+              {alertsLoading ? (
+                <div className="flex justify-center py-3">
+                  <Loader2 className="w-4 h-4 text-orange-500 animate-spin" />
+                </div>
+              ) : recentAlerts.length === 0 ? (
+                <div className="text-[10px] text-zinc-600 italic text-center py-3">
+                  Aucune alerte récente
+                </div>
+              ) : (
+                recentAlerts.map(alert => (
+                  <div
+                    key={alert.id}
+                    className={`text-xs border-l-2 pl-2 py-1 ${
+                      alert.alert_type === 'critical' ? 'border-red-500' :
+                      alert.alert_type === 'warning'  ? 'border-yellow-500' :
+                                                        'border-blue-500'
+                    }`}
+                  >
+                    <div className="flex items-center gap-1">
+                      {alert.alert_type === 'critical' ? <AlertOctagon className="w-3 h-3 text-red-400 shrink-0" /> :
+                       alert.alert_type === 'warning'  ? <Zap className="w-3 h-3 text-yellow-400 shrink-0" /> :
+                                                         <Bell className="w-3 h-3 text-blue-400 shrink-0" />}
+                      <span className={`font-medium ${
+                        alert.alert_type === 'critical' ? 'text-red-300' :
+                        alert.alert_type === 'warning'  ? 'text-yellow-300' :
+                                                          'text-blue-300'
+                      }`}>
+                        {alert.title}
+                      </span>
+                      {!alert.is_read && <span className="ml-auto w-1.5 h-1.5 rounded-full bg-orange-500 shrink-0" />}
+                    </div>
+                    <div className="text-zinc-500 text-[10px] truncate mt-0.5 pl-4">{alert.message}</div>
+                  </div>
+                ))
+              )}
+            </div>
+            <Button
+              variant="ghost"
+              className="w-full text-[10px] text-zinc-500 hover:text-white"
+              size="sm"
+              onClick={() => window.location.href = '/alerts/management'}
+            >
+              VOIR TOUTES LES ALERTES
+            </Button>
           </Card>
         </div>
       </div>

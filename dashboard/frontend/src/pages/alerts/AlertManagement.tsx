@@ -17,6 +17,8 @@ import {
   ShieldAlert,
   PhoneCall,
   ToggleLeft,
+  Plus,
+  X,
 } from 'lucide-react';
 import { Card } from '@/components/ui/card';
 import { Button } from '@/components/ui/button';
@@ -25,6 +27,21 @@ import { Switch } from '@/components/ui/switch';
 import { ScrollArea } from '@/components/ui/scroll-area';
 import { Label } from '@/components/ui/label';
 import { Slider } from '@/components/ui/slider';
+import { Input } from '@/components/ui/input';
+import {
+  Dialog,
+  DialogContent,
+  DialogHeader,
+  DialogTitle,
+  DialogFooter,
+} from '@/components/ui/dialog';
+import {
+  Select,
+  SelectContent,
+  SelectItem,
+  SelectTrigger,
+  SelectValue,
+} from '@/components/ui/select';
 import {
   AlertDialog,
   AlertDialogAction,
@@ -118,9 +135,20 @@ function InfoTooltip({ text, side = 'top' }: { text: string; side?: 'top' | 'rig
 
 // ── Component ─────────────────────────────────────────────────────────────────
 
+const RULE_TYPE_OPTIONS = [
+  { value: 'production_rate', label: 'Cadence de production (sacs/min)', hint: 'Déclenche si la cadence descend SOUS le seuil', alertType: 'warning' },
+  { value: 'error_rate',      label: 'Taux de rejet (%)',                hint: 'Déclenche si le taux de rejet dépasse le seuil', alertType: 'critical' },
+  { value: 'consistency',     label: 'Score de consistance (%)',          hint: 'Déclenche si la consistance descend SOUS le seuil', alertType: 'warning' },
+];
+
 export default function AlertManagement() {
   const [alerts, setAlerts] = useState<AlertItem[]>([]);
   const [rules, setRules] = useState<AlertRule[]>([]);
+
+  // New rule dialog state
+  const [newRuleOpen, setNewRuleOpen] = useState(false);
+  const [newRule, setNewRule] = useState({ name: '', type: 'production_rate', threshold: 10, is_active: true });
+  const [newRuleSaving, setNewRuleSaving] = useState(false);
   const [settings, setSettings] = useState<AlertSettings>({
     sound_enabled: true,
     sound_volume: 65,
@@ -217,6 +245,39 @@ export default function AlertManagement() {
     } catch {
       flash('Erreur lors de la mise à jour.', false);
     }
+  };
+
+  // ── Actions: create new rule ────────────────────────────────────────────────
+  const createRule = async () => {
+    if (!newRule.name.trim()) { flash('Veuillez saisir un nom pour la règle.', false); return; }
+    setNewRuleSaving(true);
+    try {
+      const res = await fetch(`${API_URL}/api/alerts/rules`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(newRule),
+      });
+      if (res.ok) {
+        const created = await res.json();
+        setRules(prev => [...prev, created]);
+        setNewRuleOpen(false);
+        setNewRule({ name: '', type: 'production_rate', threshold: 10, is_active: true });
+        flash('Règle créée avec succès.');
+      } else {
+        flash('Erreur lors de la création de la règle.', false);
+      }
+    } catch {
+      flash('Erreur réseau.', false);
+    } finally {
+      setNewRuleSaving(false);
+    }
+  };
+
+  // ── Actions: delete rule ────────────────────────────────────────────────────
+  const deleteRule = async (id: number) => {
+    await fetch(`${API_URL}/api/alerts/rules/${id}`, { method: 'DELETE' });
+    setRules(prev => prev.filter(r => r.id !== id));
+    flash('Règle supprimée.');
   };
 
   // ── Actions: manual alert ───────────────────────────────────────────────────
@@ -437,14 +498,27 @@ export default function AlertManagement() {
                   text="Règles évaluées toutes les 10 minutes contre les données de production réelles. Cliquez sur 'Évaluer les règles' pour forcer une évaluation immédiate."
                 />
               </h3>
-              <Badge className="bg-zinc-800 text-zinc-400 border-zinc-700 text-xs">
-                {rules.filter(r => r.is_active).length}/{rules.length} actives
-              </Badge>
+              <div className="flex items-center gap-2">
+                <Badge className="bg-zinc-800 text-zinc-400 border-zinc-700 text-xs">
+                  {rules.filter(r => r.is_active).length}/{rules.length} actives
+                </Badge>
+                <Button
+                  size="sm"
+                  className="h-7 text-[10px] font-bold bg-orange-600 hover:bg-orange-700 text-white gap-1"
+                  onClick={() => setNewRuleOpen(true)}
+                >
+                  <Plus className="w-3 h-3" /> Ajouter
+                </Button>
+              </div>
             </div>
             <div className="divide-y divide-zinc-800/50">
               {loading ? (
                 <div className="p-6 flex justify-center">
                   <Loader2 className="w-6 h-6 text-orange-500 animate-spin" />
+                </div>
+              ) : rules.length === 0 ? (
+                <div className="p-6 text-center text-xs text-zinc-600">
+                  Aucune règle configurée. Cliquez sur "Ajouter" pour créer la première règle.
                 </div>
               ) : rules.map((rule) => (
                 <div key={rule.id} className="p-4 flex items-center gap-4">
@@ -482,11 +556,122 @@ export default function AlertManagement() {
                       checked={rule.is_active}
                       onCheckedChange={(v) => updateRule(rule.id, { is_active: v })}
                     />
+                    <button
+                      className="text-zinc-600 hover:text-red-400 transition-colors"
+                      title="Supprimer cette règle"
+                      onClick={() => deleteRule(rule.id)}
+                    >
+                      <X className="w-4 h-4" />
+                    </button>
                   </div>
                 </div>
               ))}
             </div>
           </Card>
+
+          {/* ── New Rule Dialog ── */}
+          <Dialog open={newRuleOpen} onOpenChange={(o: boolean) => setNewRuleOpen(o)}>
+            <DialogContent className="bg-zinc-950 border-zinc-800 text-white max-w-md">
+              <DialogHeader>
+                <DialogTitle className="text-white flex items-center gap-2">
+                  <Plus className="w-4 h-4 text-orange-500" />
+                  Nouvelle Règle d'Alerte
+                </DialogTitle>
+              </DialogHeader>
+
+              <div className="space-y-4 py-2">
+                {/* Name */}
+                <div className="space-y-1.5">
+                  <Label className="text-[10px] font-bold text-zinc-500 uppercase tracking-widest">
+                    Nom de la règle *
+                  </Label>
+                  <Input
+                    value={newRule.name}
+                    onChange={e => setNewRule(r => ({ ...r, name: e.target.value }))}
+                    placeholder="Ex: Cadence minimale ligne B"
+                    className="bg-zinc-900 border-zinc-700 text-white h-10 focus:border-orange-500"
+                  />
+                </div>
+
+                {/* Type */}
+                <div className="space-y-1.5">
+                  <Label className="text-[10px] font-bold text-zinc-500 uppercase tracking-widest">
+                    Type de métrique
+                  </Label>
+                  <Select
+                    value={newRule.type}
+                    onValueChange={v => setNewRule(r => ({ ...r, type: v }))}
+                  >
+                    <SelectTrigger className="bg-zinc-900 border-zinc-700 text-white h-10">
+                      <SelectValue />
+                    </SelectTrigger>
+                    <SelectContent className="bg-zinc-950 border-zinc-800 text-white">
+                      {RULE_TYPE_OPTIONS.map(opt => (
+                        <SelectItem key={opt.value} value={opt.value}>
+                          {opt.label}
+                        </SelectItem>
+                      ))}
+                    </SelectContent>
+                  </Select>
+                  <p className="text-[10px] text-zinc-500 italic">
+                    {RULE_TYPE_OPTIONS.find(o => o.value === newRule.type)?.hint}
+                  </p>
+                </div>
+
+                {/* Threshold */}
+                <div className="space-y-1.5">
+                  <Label className="text-[10px] font-bold text-zinc-500 uppercase tracking-widest">
+                    Seuil de déclenchement
+                  </Label>
+                  <div className="flex items-center gap-2">
+                    <Input
+                      type="number"
+                      step="0.1"
+                      min="0"
+                      value={newRule.threshold}
+                      onChange={e => {
+                        const v = parseFloat(e.target.value);
+                        if (!isNaN(v)) setNewRule(r => ({ ...r, threshold: v }));
+                      }}
+                      className="bg-zinc-900 border-zinc-700 text-white h-10 font-mono focus:border-orange-500"
+                    />
+                    <span className="text-xs text-zinc-500 shrink-0">
+                      {newRule.type === 'error_rate' ? '%' :
+                       newRule.type === 'production_rate' ? 'sacs/min' : '%'}
+                    </span>
+                  </div>
+                </div>
+
+                {/* Active */}
+                <div className="flex items-center justify-between pt-2 border-t border-zinc-800">
+                  <Label className="text-sm text-zinc-300">Activer immédiatement</Label>
+                  <Switch
+                    checked={newRule.is_active}
+                    onCheckedChange={v => setNewRule(r => ({ ...r, is_active: v }))}
+                  />
+                </div>
+              </div>
+
+              <DialogFooter className="gap-2">
+                <Button
+                  variant="outline"
+                  className="border-zinc-700 text-zinc-400"
+                  onClick={() => setNewRuleOpen(false)}
+                  disabled={newRuleSaving}
+                >
+                  Annuler
+                </Button>
+                <Button
+                  className="bg-orange-600 hover:bg-orange-700 text-white gap-2"
+                  onClick={createRule}
+                  disabled={newRuleSaving || !newRule.name.trim()}
+                >
+                  {newRuleSaving && <Loader2 className="w-3 h-3 animate-spin" />}
+                  Créer la règle
+                </Button>
+              </DialogFooter>
+            </DialogContent>
+          </Dialog>
         </div>
 
         {/* ── Right panel ── */}
