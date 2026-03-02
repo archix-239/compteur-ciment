@@ -156,6 +156,19 @@ async def lifespan(app: FastAPI):
     finally:
         db.close()
 
+    # ── DB Migration: add alert columns if missing (SQLite ALTER TABLE) ────────
+    from sqlalchemy import text as _sa_text
+    for _stmt in [
+        "ALTER TABLE alert_history ADD COLUMN alert_type TEXT NOT NULL DEFAULT 'info'",
+        "ALTER TABLE alert_history ADD COLUMN title TEXT",
+    ]:
+        try:
+            with engine.connect() as _conn:
+                _conn.execute(_sa_text(_stmt))
+                _conn.commit()
+        except Exception:
+            pass  # Column already exists
+
     yield  # ── Application is running ──
 
     # Shutdown: stop the vision engine cleanly
@@ -757,10 +770,222 @@ async def get_system_health():
 
 
 # ─── Alerts ───────────────────────────────────────────────────────────────────
-@app.get("/api/alerts/rules", response_model=List[schemas.AlertRule])
+
+_ALERT_SETTING_KEYS = [
+    "alert_sound_enabled", "alert_sound_volume",
+    "alert_email_enabled", "alert_slack_enabled", "alert_supervisor_phone",
+]
+
+
+def _alert_type_from_rule(rule: models.AlertRule) -> str:
+    if rule.type == "error_rate":
+        return "critical"
+    elif rule.type == "production_rate":
+        return "warning"
+    return "info"
+
+
+def _alert_to_dict(alert: models.AlertHistory, rule: models.AlertRule | None = None) -> dict:
+    atype = alert.alert_type or (_alert_type_from_rule(rule) if rule else "info")
+    title = alert.title or (rule.name if rule else "Alerte")
+    return {
+        "id": alert.id,
+        "rule_id": alert.rule_id,
+        "timestamp": alert.timestamp.isoformat(),
+        "message": alert.message,
+        "title": title,
+        "is_read": alert.is_read,
+        "alert_type": atype,
+    }
+
+
+@app.get("/api/alerts/history")
+async def get_alert_history(limit: int = 50, unread_only: bool = False, db: Session = Depends(get_db)):
+    query = db.query(models.AlertHistory)
+    if unread_only:
+        query = query.filter(models.AlertHistory.is_read == False)
+    alerts = query.order_by(models.AlertHistory.timestamp.desc()).limit(limit).all()
+    rules_map = {r.id: r for r in db.query(models.AlertRule).all()}
+    return [_alert_to_dict(a, rules_map.get(a.rule_id)) for a in alerts]
+
+
+@app.get("/api/alerts/unread-count")
+async def get_alert_unread_count(db: Session = Depends(get_db)):
+    count = db.query(models.AlertHistory).filter(models.AlertHistory.is_read == False).count()
+    return {"count": count}
+
+
+@app.post("/api/alerts/history")
+async def create_manual_alert(payload: schemas.AlertHistoryCreate, db: Session = Depends(get_db)):
+    alert = models.AlertHistory(
+        rule_id=None,
+        message=payload.message,
+        title=payload.title,
+        alert_type=payload.alert_type,
+        is_read=False,
+    )
+    db.add(alert)
+    db.commit()
+    db.refresh(alert)
+    return _alert_to_dict(alert)
+
+
+@app.patch("/api/alerts/history/{alert_id}/read")
+async def mark_alert_read(alert_id: int, db: Session = Depends(get_db)):
+    alert = db.query(models.AlertHistory).filter(models.AlertHistory.id == alert_id).first()
+    if not alert:
+        raise HTTPException(status_code=404, detail="Alerte introuvable")
+    alert.is_read = True
+    db.commit()
+    return {"ok": True}
+
+
+@app.post("/api/alerts/history/read-all")
+async def mark_all_alerts_read(db: Session = Depends(get_db)):
+    db.query(models.AlertHistory).filter(
+        models.AlertHistory.is_read == False
+    ).update({"is_read": True})
+    db.commit()
+    return {"ok": True}
+
+
+@app.delete("/api/alerts/history/{alert_id}")
+async def delete_single_alert(alert_id: int, db: Session = Depends(get_db)):
+    alert = db.query(models.AlertHistory).filter(models.AlertHistory.id == alert_id).first()
+    if not alert:
+        raise HTTPException(status_code=404, detail="Alerte introuvable")
+    db.delete(alert)
+    db.commit()
+    return {"ok": True}
+
+
+@app.delete("/api/alerts/history")
+async def clear_all_alerts(db: Session = Depends(get_db)):
+    db.query(models.AlertHistory).delete()
+    db.commit()
+    return {"ok": True}
+
+
+@app.get("/api/alerts/rules")
 async def get_alert_rules(db: Session = Depends(get_db)):
     rules = db.query(models.AlertRule).all()
-    return rules
+    return [{"id": r.id, "name": r.name, "type": r.type, "threshold": r.threshold, "is_active": r.is_active} for r in rules]
+
+
+@app.put("/api/alerts/rules/{rule_id}")
+async def update_alert_rule(rule_id: int, payload: schemas.AlertRuleUpdate, db: Session = Depends(get_db)):
+    rule = db.query(models.AlertRule).filter(models.AlertRule.id == rule_id).first()
+    if not rule:
+        raise HTTPException(status_code=404, detail="Règle introuvable")
+    if payload.name is not None:
+        rule.name = payload.name
+    if payload.threshold is not None:
+        rule.threshold = payload.threshold
+    if payload.is_active is not None:
+        rule.is_active = payload.is_active
+    db.commit()
+    db.refresh(rule)
+    return {"id": rule.id, "name": rule.name, "type": rule.type, "threshold": rule.threshold, "is_active": rule.is_active}
+
+
+@app.get("/api/alerts/settings")
+async def get_alert_settings(db: Session = Depends(get_db)):
+    rows = db.query(models.SystemSetting).filter(
+        models.SystemSetting.key.in_(_ALERT_SETTING_KEYS)
+    ).all()
+    s = {r.key: r.value for r in rows}
+    return {
+        "sound_enabled": s.get("alert_sound_enabled", "true").lower() == "true",
+        "sound_volume": int(s.get("alert_sound_volume", "65")),
+        "email_enabled": s.get("alert_email_enabled", "true").lower() == "true",
+        "slack_enabled": s.get("alert_slack_enabled", "false").lower() == "true",
+        "supervisor_phone": s.get("alert_supervisor_phone", "+33 6 12 34 56 78"),
+    }
+
+
+@app.put("/api/alerts/settings")
+async def update_alert_settings(payload: schemas.AlertSettings, db: Session = Depends(get_db)):
+    updates = {
+        "alert_sound_enabled": str(payload.sound_enabled).lower(),
+        "alert_sound_volume": str(payload.sound_volume),
+        "alert_email_enabled": str(payload.email_enabled).lower(),
+        "alert_slack_enabled": str(payload.slack_enabled).lower(),
+        "alert_supervisor_phone": payload.supervisor_phone,
+    }
+    for key, value in updates.items():
+        row = db.query(models.SystemSetting).filter(models.SystemSetting.key == key).first()
+        if row:
+            row.value = value
+        else:
+            db.add(models.SystemSetting(key=key, value=value))
+    db.commit()
+    return {"ok": True}
+
+
+@app.post("/api/alerts/evaluate")
+async def evaluate_alert_rules(db: Session = Depends(get_db)):
+    """Evaluate active alert rules against recent production metrics and create alerts if triggered."""
+    import datetime as _dt
+
+    now = _dt.datetime.utcnow()
+    window_5m = now - _dt.timedelta(minutes=5)
+    window_10m = now - _dt.timedelta(minutes=10)
+
+    rules = db.query(models.AlertRule).filter(models.AlertRule.is_active == True).all()
+    triggered = []
+
+    for rule in rules:
+        # Anti-spam: skip if already alerted for this rule in last 10 minutes
+        recent = db.query(models.AlertHistory).filter(
+            models.AlertHistory.rule_id == rule.id,
+            models.AlertHistory.timestamp >= window_10m,
+        ).first()
+        if recent:
+            continue
+
+        should_trigger = False
+        message = ""
+        alert_type = "warning"
+
+        if rule.type == "production_rate":
+            count = db.query(models.DetectionLog).filter(
+                models.DetectionLog.timestamp >= window_5m,
+                models.DetectionLog.status == "conforme",
+            ).count()
+            rate = count / 5.0
+            if rate < rule.threshold:
+                should_trigger = True
+                alert_type = "warning"
+                message = f"Cadence {rate:.1f} sacs/min sous le seuil de {rule.threshold:.1f} sacs/min."
+
+        elif rule.type == "error_rate":
+            total = db.query(models.DetectionLog).filter(
+                models.DetectionLog.timestamp >= window_5m
+            ).count()
+            rejected = db.query(models.DetectionLog).filter(
+                models.DetectionLog.timestamp >= window_5m,
+                models.DetectionLog.status == "rejete",
+            ).count()
+            if total > 0:
+                rate = (rejected / total) * 100
+                if rate > rule.threshold:
+                    should_trigger = True
+                    alert_type = "critical"
+                    message = f"Taux de rejet {rate:.1f}% dépasse le seuil de {rule.threshold:.1f}%."
+
+        if should_trigger:
+            alert = models.AlertHistory(
+                rule_id=rule.id,
+                message=message,
+                title=rule.name,
+                alert_type=alert_type,
+                is_read=False,
+            )
+            db.add(alert)
+            triggered.append({"rule": rule.name, "message": message})
+
+    db.commit()
+    return {"triggered": len(triggered), "alerts": triggered}
 
 
 # ─── Analytics / OEE ─────────────────────────────────────────────────────────

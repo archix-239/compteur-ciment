@@ -47,9 +47,11 @@ class AlertRule(Base):
 class AlertHistory(Base):
     __tablename__ = "alert_history"
     id = Column(Integer, primary_key=True, index=True)
-    rule_id = Column(Integer, ForeignKey("alert_rules.id"))
+    rule_id = Column(Integer, ForeignKey("alert_rules.id"), nullable=True)
     timestamp = Column(DateTime, default=datetime.datetime.utcnow)
     message = Column(String)
+    title = Column(String, nullable=True)
+    alert_type = Column(String, default="info")   # critical | warning | info
     is_read = Column(Boolean, default=False)
 
 

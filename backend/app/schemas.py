@@ -68,6 +68,34 @@ class AlertRule(AlertRuleBase):
     class Config:
         from_attributes = True
 
+class AlertRuleUpdate(BaseModel):
+    name: Optional[str] = None
+    threshold: Optional[float] = None
+    is_active: Optional[bool] = None
+
+class AlertHistoryCreate(BaseModel):
+    message: str
+    title: str = "Alerte manuelle"
+    alert_type: str = "info"   # critical | warning | info
+
+class AlertHistoryResponse(BaseModel):
+    id: int
+    rule_id: Optional[int] = None
+    timestamp: datetime
+    message: str
+    title: str
+    is_read: bool
+    alert_type: str
+    class Config:
+        from_attributes = True
+
+class AlertSettings(BaseModel):
+    sound_enabled: bool = True
+    sound_volume: int = 65
+    email_enabled: bool = True
+    slack_enabled: bool = False
+    supervisor_phone: str = "+33 6 12 34 56 78"
+
 class SystemSettingBase(BaseModel):
     key: str
     value: str

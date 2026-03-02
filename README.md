@@ -105,7 +105,7 @@ Suivi de l'intégration réelle (remplacement des données fictives par des appe
 | 9 | **Qualité — Tableau de Bord** | Fait | Dashboard qualité branché sur `/api/quality/summary` avec distributions de confiance/logo calculées depuis les logs réels. |
 | 10 | **Qualité — Vérification Manuelle** | Fait | File de revue connectée (`GET /api/quality/manual-verification`) + action opérateur via `PATCH /api/logs/{id}` (Valider/Rejeter) + historique (`GET /api/quality/reviews`). |
 | 11 | **Qualité — Détection d'Anomalies** | Fait | Liste d'anomalies réelles depuis `/api/quality/anomalies` (rejets + scores faibles) avec miniatures snapshots backend. |
-| 12 | Alertes — Gestion des Alertes | En attente | — |
+| 12 | **Alertes — Gestion des Alertes** | Fait | `GET /api/alerts/history` : historique réel depuis la BDD. `GET\|PUT /api/alerts/settings` : paramètres persistés (son, email, Slack, téléphone). `PATCH /api/alerts/history/{id}/read`, `POST /api/alerts/history/read-all`, `DELETE /api/alerts/history[/{id}]` : gestion lecture/suppression. `PUT /api/alerts/rules/{id}` : édition seuils + activation règles. `POST /api/alerts/history` : alerte manuelle opérateur. `POST /api/alerts/evaluate` : évaluation immédiate des règles vs métriques réelles. Badge unread count en temps réel sur le Sidebar (toutes les 30s). Tooltips `?` sur chaque section. |
 | 13 | **Rapports — Production** | Fait | `GET /api/reports/production?period=day\|week\|month` : métriques réelles (totalBags, avgInterval, detectionRate, sessionHours, availability, OEE) + deltas vs période précédente. Graphique comparaison actuelle vs précédente (buckets horaires/journaliers/hebdo). Décomposition OEE bar chart (Disponibilité, Performance, Qualité). Analyses clés dynamiques (pic de production, consistance). Export CSV direct `GET /api/reports/export/csv`. Icônes `?` tooltip sur chaque indicateur. |
 | 14 | Rapports — Export de Données | En attente | — |
 | 15 | Rapports — Piste d'Audit | En attente | — |
@@ -129,6 +129,18 @@ Suivi de l'intégration réelle (remplacement des données fictives par des appe
 | `POST` | `/api/models/upload` | Upload d'un fichier `.pt` (multipart) vers `models/` |
 | `DELETE` | `/api/models/{filename}` | Supprime un `.pt` (refuse si modèle actif) |
 | `GET` | `/api/timeline/hourly` | Distribution horaire sur N dernières heures (`?hours=6\|24\|72`) : count, interval moyen, rejets par bucket + analyse des pics |
+| `GET` | `/api/alerts/history` | Historique des alertes (`?limit=100&unread_only=false`) : id, title, message, alert_type, is_read, timestamp |
+| `POST` | `/api/alerts/history` | Crée une alerte manuelle (title, message, alert_type) |
+| `PATCH` | `/api/alerts/history/{id}/read` | Marque une alerte comme lue |
+| `POST` | `/api/alerts/history/read-all` | Marque toutes les alertes comme lues |
+| `DELETE` | `/api/alerts/history/{id}` | Supprime une alerte |
+| `DELETE` | `/api/alerts/history` | Efface tout l'historique |
+| `GET` | `/api/alerts/rules` | Liste les règles d'alerte (id, name, type, threshold, is_active) |
+| `PUT` | `/api/alerts/rules/{id}` | Modifie une règle (name, threshold, is_active) |
+| `GET` | `/api/alerts/settings` | Paramètres de notification (son, email, Slack, téléphone) |
+| `PUT` | `/api/alerts/settings` | Sauvegarde les paramètres de notification |
+| `GET` | `/api/alerts/unread-count` | Nombre d'alertes non lues (pour badge Sidebar) |
+| `POST` | `/api/alerts/evaluate` | Évalue les règles actives vs métriques récentes, crée des alertes si déclenchées |
 | `GET` | `/api/analytics/oee` | OEE complet (`?hours=6\|24\|168\|720`) : oee, oeeDelta, availability, performance, quality, hourlyData (buckets adaptatifs), downtimeData (pie répartition), recommendations IA dynamiques |
 | `GET` | `/api/reports/production` | Rapport de production (`?period=day\|week\|month`) : KPI + deltas vs période précédente, trendData comparaison, oeeData (Disponibilité/Performance/Qualité), peak bucket, consistance |
 | `GET` | `/api/reports/export/csv` | Export CSV des logs de détection de la période (`?period=day\|week\|month`) : ID, timestamp, session, statut, scores, intervalle, capture URL |

@@ -22,7 +22,8 @@ import {
   Server,
   History
 } from 'lucide-react';
-import { useState } from 'react';
+import { useState, useEffect } from 'react';
+import { API_URL } from '@/lib/api';
 
 interface SidebarProps {
   activeRoute?: string;
@@ -39,6 +40,25 @@ interface MenuSection {
 }
 
 export function Sidebar({ activeRoute = 'dashboard' }: SidebarProps) {
+  const [unreadAlerts, setUnreadAlerts] = useState<number>(0);
+
+  useEffect(() => {
+    const fetchUnread = async () => {
+      try {
+        const res = await fetch(`${API_URL}/api/alerts/unread-count`);
+        if (res.ok) {
+          const data = await res.json();
+          setUnreadAlerts(data.count ?? 0);
+        }
+      } catch {
+        // silent fail — sidebar badge is non-critical
+      }
+    };
+    fetchUnread();
+    const interval = setInterval(fetchUnread, 30_000);
+    return () => clearInterval(interval);
+  }, []);
+
   const [expandedSections, setExpandedSections] = useState<Record<string, boolean>>({
     monitoring: true,
     production: true,
@@ -176,6 +196,11 @@ export function Sidebar({ activeRoute = 'dashboard' }: SidebarProps) {
                 <div className="flex items-center gap-2">
                   <Icon className="w-4 h-4" />
                   <span>{section.title}</span>
+                  {section.title === 'Alertes' && unreadAlerts > 0 && (
+                    <span className="ml-0.5 inline-flex items-center justify-center h-4 min-w-4 px-1 rounded-full bg-orange-500 text-white text-[9px] font-bold leading-none">
+                      {unreadAlerts > 99 ? '99+' : unreadAlerts}
+                    </span>
+                  )}
                 </div>
                 <ChevronDown className={`w-3 h-3 transition-transform duration-200 ${isExpanded ? '' : '-rotate-90'}`} />
               </button>
