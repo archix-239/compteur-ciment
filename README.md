@@ -107,7 +107,7 @@ Suivi de l'intégration réelle (remplacement des données fictives par des appe
 | 11 | **Qualité — Détection d'Anomalies** | Fait | Liste d'anomalies réelles depuis `/api/quality/anomalies` (rejets + scores faibles) avec miniatures snapshots backend. |
 | 12 | **Alertes — Gestion des Alertes** | Fait | `GET /api/alerts/history` : historique réel depuis la BDD. `GET\|PUT /api/alerts/settings` : paramètres persistés (son, email, Slack, téléphone). `PATCH /api/alerts/history/{id}/read`, `POST /api/alerts/history/read-all`, `DELETE /api/alerts/history[/{id}]` : gestion lecture/suppression. `PUT /api/alerts/rules/{id}` : édition seuils + activation règles. `POST /api/alerts/history` : alerte manuelle opérateur. `POST /api/alerts/evaluate` : évaluation immédiate des règles vs métriques réelles. Badge unread count en temps réel sur le Sidebar (toutes les 30s). Tooltips `?` sur chaque section. |
 | 13 | **Rapports — Production** | Fait | `GET /api/reports/production?period=day\|week\|month` : métriques réelles (totalBags, avgInterval, detectionRate, sessionHours, availability, OEE) + deltas vs période précédente. Graphique comparaison actuelle vs précédente (buckets horaires/journaliers/hebdo). Décomposition OEE bar chart (Disponibilité, Performance, Qualité). Analyses clés dynamiques (pic de production, consistance). Export CSV direct `GET /api/reports/export/csv`. Icônes `?` tooltip sur chaque indicateur. |
-| 14 | Rapports — Export de Données | En attente | — |
+| 14 | **Rapports — Export de Données** | Fait | Exports manuels **CSV / XLSX / PDF / JSON** sur 4 sources (comptages bruts, sessions, anomalies, qualité) × 5 périodes (aujourd'hui, hier, 7j, 30j, personnalisé). XLSX avec mise en forme industrielle (`openpyxl`). PDF A4 paysage mis en forme (`fpdf2`, max 2 000 lignes). Prévisualisation en temps réel (lignes + taille). Planification automatique : fréquence quotidienne/hebdo/mensuelle, heure UTC, source, format, période — sauvegardé en BDD. Déclenchement manuel immédiat. Historique des exports automatiques avec lien de téléchargement. Historique des 20 derniers exports manuels. Tooltips `?` partout. |
 | 15 | Rapports — Piste d'Audit | En attente | — |
 | 16 | Administration — Utilisateurs | En attente | — |
 | 17 | **Administration — Paramètres Système** | Partiel | `GET/PUT /api/system/general-settings` : identité site, fuseau, langue, préférences notifications, niveau log, rétention. Onglet **Alertes** connecté : canaux (son, email, Slack, téléphone superviseur) via `GET/PUT /api/alerts/settings` + aperçu des règles avec toggle via `PUT /api/alerts/rules/{id}`. Tooltips `?` sur chaque paramètre. *(Sécurité et Backup restent UI statique.)* |
@@ -147,7 +147,14 @@ Suivi de l'intégration réelle (remplacement des données fictives par des appe
 | `PUT` | `/api/system/general-settings` | Sauvegarde les paramètres généraux |
 | `GET` | `/api/analytics/oee` | OEE complet (`?hours=6\|24\|168\|720`) : oee, oeeDelta, availability, performance, quality, hourlyData (buckets adaptatifs), downtimeData (pie répartition), recommendations IA dynamiques |
 | `GET` | `/api/reports/production` | Rapport de production (`?period=day\|week\|month`) : KPI + deltas vs période précédente, trendData comparaison, oeeData (Disponibilité/Performance/Qualité), peak bucket, consistance |
-| `GET` | `/api/reports/export/csv` | Export CSV des logs de détection de la période (`?period=day\|week\|month`) : ID, timestamp, session, statut, scores, intervalle, capture URL |
+| `GET` | `/api/reports/export/preview` | Estimation rows + taille fichier pour period+source donnés (`?period=today\|yesterday\|last-7-days\|last-30-days\|custom&source=counts\|sessions\|anomalies\|quality`) |
+| `GET` | `/api/reports/export/data` | Export réel CSV / XLSX / PDF / JSON (`?period=…&source=…&fmt=csv\|xlsx\|pdf\|json&date_from=&date_to=`) — 4 sources, déclenche téléchargement |
+| `GET` | `/api/reports/export/history` | Historique des 20 derniers exports manuels générés (in-memory, reset au redémarrage) |
+| `GET` | `/api/reports/export/schedule` | Config de planification automatique (enabled, frequency, time, source, format, period, email) |
+| `PUT` | `/api/reports/export/schedule` | Sauvegarde la config de planification en BDD (SystemSettings keys `export_sched_*`) |
+| `POST` | `/api/reports/export/schedule/run` | Déclenche immédiatement un export planifié et sauvegarde le fichier dans `backend/static/exports/` |
+| `GET` | `/api/reports/export/scheduled` | Historique des 10 derniers exports automatiques avec URL de téléchargement |
+| `GET` | `/api/reports/export/csv` | Alias legacy — redirige vers `/api/reports/export/data` (compatibilité ascendante) |
 | `GET` | `/api/config/camera` | Récupère la configuration caméra actuelle |
 | `PUT` | `/api/config/camera` | Sauvegarde la configuration caméra |
 | `POST` | `/api/config/camera/test` | Teste la connexion à la source vidéo (vérification réelle via OpenCV) |

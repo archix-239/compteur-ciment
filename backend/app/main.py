@@ -169,12 +169,18 @@ async def lifespan(app: FastAPI):
         except Exception:
             pass  # Column already exists
 
+    # ── Start scheduled export background task ────────────────────────────
+    global _schedule_task
+    _schedule_task = asyncio.create_task(_scheduler_loop())
+
     yield  # ── Application is running ──
 
-    # Shutdown: stop the vision engine cleanly
+    # Shutdown: stop the vision engine cleanly + cancel scheduler
     print("INFO: Shutdown signal reçu, arrêt du moteur de vision...")
     v_engine = vision_engine.get_vision_engine()
     v_engine.stop()
+    if _schedule_task and not _schedule_task.done():
+        _schedule_task.cancel()
     _main_loop = None
     print("INFO: Shutdown complet.")
 
@@ -460,51 +466,570 @@ async def get_production_report(period: str = "week", db: Session = Depends(get_
     }
 
 
-@app.get("/api/reports/export/csv")
-async def export_production_csv(period: str = "week", db: Session = Depends(get_db)):
-    """Export DetectionLog entries for the period as a UTF-8 CSV file."""
+# ─── Export System ───────────────────────────────────────────────────────────
+_export_history: list[dict] = []
+
+def _export_period_range(period: str, date_from: str = "", date_to: str = ""):
+    """Return (start_dt, end_dt, period_label) for the requested period string."""
     from datetime import datetime as _dt, timedelta as _td
+    now = _dt.utcnow()
+    if period == "yesterday":
+        return now - _td(hours=48), now - _td(hours=24), "Hier"
+    if period == "last-7-days":
+        return now - _td(hours=168), now, "7 Derniers Jours"
+    if period == "last-30-days":
+        return now - _td(hours=720), now, "30 Derniers Jours"
+    if period == "custom" and date_from and date_to:
+        try:
+            return _dt.fromisoformat(date_from), _dt.fromisoformat(date_to), "Personnalisé"
+        except Exception:
+            pass
+    # default: today (last 24 h)
+    return now - _td(hours=24), now, "Aujourd'hui"
+
+
+@app.get("/api/reports/export/preview")
+async def export_preview(
+    period: str = "today", source: str = "counts",
+    date_from: str = "", date_to: str = "",
+    db: Session = Depends(get_db),
+):
+    """Return estimated row count and file size for the requested export."""
+    start, end, _ = _export_period_range(period, date_from, date_to)
+    AVG_BYTES = {"counts": 120, "sessions": 80, "anomalies": 100, "quality": 90}
+    if source == "counts":
+        count = db.query(models.DetectionLog).filter(
+            models.DetectionLog.timestamp >= start,
+            models.DetectionLog.timestamp <= end,
+        ).count()
+    elif source == "sessions":
+        count = db.query(models.Session).filter(
+            models.Session.start_time >= start,
+            models.Session.start_time <= end,
+        ).count()
+    elif source == "anomalies":
+        count = db.query(models.AlertHistory).filter(
+            models.AlertHistory.timestamp >= start,
+            models.AlertHistory.timestamp <= end,
+        ).count()
+    elif source == "quality":
+        count = db.query(models.QualityReview).filter(
+            models.QualityReview.created_at >= start,
+            models.QualityReview.created_at <= end,
+        ).count()
+    else:
+        count = 0
+    size_kb = round((count * AVG_BYTES.get(source, 100)) / 1024, 1)
+    return {"rows": count, "size_kb": size_kb}
+
+
+@app.get("/api/reports/export/data")
+async def export_data(
+    period: str = "today", source: str = "counts", fmt: str = "csv",
+    date_from: str = "", date_to: str = "",
+    db: Session = Depends(get_db),
+):
+    """Export data as CSV or JSON. Sources: counts | sessions | anomalies | quality."""
+    from datetime import datetime as _dt
     from fastapi.responses import StreamingResponse
-    import csv
-    import io
+    import csv as _csv, io as _io, json as _json
 
-    PERIOD_HOURS = {"day": 24, "week": 168, "month": 720}
-    hours = PERIOD_HOURS.get(period, 168)
-    start = _dt.utcnow() - _td(hours=hours)
+    start, end, period_label = _export_period_range(period, date_from, date_to)
+    ts_now = _dt.utcnow().strftime("%Y%m%d_%H%M%S")
 
-    logs = (
-        db.query(models.DetectionLog)
-        .filter(models.DetectionLog.timestamp >= start)
-        .order_by(models.DetectionLog.timestamp.asc())
-        .all()
-    )
+    def _ts(v):
+        return v.isoformat() if hasattr(v, "isoformat") else (str(v) if v else "")
 
-    buf = io.StringIO()
-    writer = csv.writer(buf)
-    writer.writerow([
-        "ID", "Timestamp", "Session", "Statut",
-        "Identifiant", "Score Détection", "Score Logo",
-        "Score Couleur", "Intervalle (s)", "Capture URL",
-    ])
-    for l in logs:
-        ts = l.timestamp.isoformat() if hasattr(l.timestamp, "isoformat") else str(l.timestamp)
-        writer.writerow([
-            l.id, ts, l.session_id, l.status,
-            l.identifier or "",
-            round(l.detection_score or 0, 4),
-            round(l.logo_score or 0, 4),
-            round(l.color_score or 0, 4),
-            round(l.interval or 0, 3),
-            l.capture_url or "",
-        ])
+    SOURCE_LABELS = {
+        "counts": "Comptages Bruts", "sessions": "Sessions",
+        "anomalies": "Anomalies / Alertes", "quality": "Qualité",
+    }
 
-    buf.seek(0)
-    fname = f"production_{period}_{_dt.utcnow().strftime('%Y%m%d_%H%M%S')}.csv"
-    return StreamingResponse(
-        iter([buf.getvalue()]),
-        media_type="text/csv; charset=utf-8",
-        headers={"Content-Disposition": f"attachment; filename={fname}"},
-    )
+    if source == "counts":
+        rows_q = (db.query(models.DetectionLog)
+                  .filter(models.DetectionLog.timestamp >= start,
+                          models.DetectionLog.timestamp <= end)
+                  .order_by(models.DetectionLog.timestamp.asc()).all())
+        headers = ["ID", "Timestamp", "Session", "Statut", "Identifiant",
+                   "Score Détection", "Score Logo", "Score Couleur", "Intervalle (s)", "Capture URL"]
+        rows = [[l.id, _ts(l.timestamp), l.session_id, l.status, l.identifier or "",
+                 round(l.detection_score or 0, 4), round(l.logo_score or 0, 4),
+                 round(l.color_score or 0, 4), round(l.interval or 0, 3), l.capture_url or ""]
+                for l in rows_q]
+        fname_base = f"comptage_{period}_{ts_now}"
+    elif source == "sessions":
+        rows_q = (db.query(models.Session)
+                  .filter(models.Session.start_time >= start,
+                          models.Session.start_time <= end)
+                  .order_by(models.Session.start_time.asc()).all())
+        headers = ["ID", "Début", "Fin", "Total Sacs", "Sacs Rejetés", "Statut"]
+        rows = [[s.id, _ts(s.start_time), _ts(s.end_time),
+                 s.total_count or 0, s.rejected_count or 0, s.status]
+                for s in rows_q]
+        fname_base = f"sessions_{period}_{ts_now}"
+    elif source == "anomalies":
+        rows_q = (db.query(models.AlertHistory)
+                  .filter(models.AlertHistory.timestamp >= start,
+                          models.AlertHistory.timestamp <= end)
+                  .order_by(models.AlertHistory.timestamp.asc()).all())
+        headers = ["ID", "Timestamp", "Titre", "Message", "Type", "Lu"]
+        rows = [[a.id, _ts(a.timestamp), a.title or "", a.message or "",
+                 a.alert_type or "info", "oui" if a.is_read else "non"]
+                for a in rows_q]
+        fname_base = f"alertes_{period}_{ts_now}"
+    elif source == "quality":
+        rows_q = (db.query(models.QualityReview)
+                  .filter(models.QualityReview.created_at >= start,
+                          models.QualityReview.created_at <= end)
+                  .order_by(models.QualityReview.created_at.asc()).all())
+        headers = ["ID", "Log ID", "Action", "Statut Cible", "Notes", "Réviseur", "Date"]
+        rows = [[r.id, r.log_id, r.action, r.target_status or "",
+                 r.notes or "", r.reviewer or "", _ts(r.created_at)]
+                for r in rows_q]
+        fname_base = f"qualite_{period}_{ts_now}"
+    else:
+        raise HTTPException(status_code=400, detail="Source invalide")
+
+    # ── Record in history ─────────────────────────────────────────────────
+    _export_history.insert(0, {
+        "name": f"{fname_base}.{fmt}",
+        "source": SOURCE_LABELS.get(source, source),
+        "period_label": period_label,
+        "rows": len(rows),
+        "size_kb": round((len(rows) * 100) / 1024, 1),
+        "timestamp": _dt.utcnow().isoformat(),
+        "format": fmt,
+    })
+    if len(_export_history) > 20:
+        _export_history.pop()
+
+    # ── Generate output ───────────────────────────────────────────────────
+    if fmt == "json":
+        data = [dict(zip(headers, r)) for r in rows]
+        content = _json.dumps(
+            {"period": period_label, "source": source, "data": data},
+            ensure_ascii=False, indent=2,
+        )
+        return StreamingResponse(
+            iter([content]),
+            media_type="application/json; charset=utf-8",
+            headers={"Content-Disposition": f"attachment; filename={fname_base}.json"},
+        )
+
+    elif fmt == "xlsx":
+        import openpyxl as _xl
+        from openpyxl.styles import Font as _XF, PatternFill as _XP, Alignment as _XA
+        wb = _xl.Workbook()
+        ws = wb.active
+        ws.title = SOURCE_LABELS.get(source, source)[:31]
+        # Title row (merged across all columns)
+        last_col_letter = chr(64 + min(len(headers), 26))
+        ws.merge_cells(f"A1:{last_col_letter}1")
+        tc = ws["A1"]
+        tc.value = f"Export — {SOURCE_LABELS.get(source, source)} — {period_label}"
+        tc.font = _XF(bold=True, size=12, color="FFFFFF")
+        tc.fill = _XP(start_color="E85D04", end_color="E85D04", fill_type="solid")
+        tc.alignment = _XA(horizontal="center")
+        # Info row
+        ws.append(["Généré:", _dt.utcnow().strftime("%d/%m/%Y %H:%M UTC"),
+                   "Période:", period_label, "Lignes:", len(rows)])
+        for cell in ws[2]:
+            cell.font = _XF(color="999999", italic=True, size=8)
+        # Header row (row 3)
+        ws.append(headers)
+        for cell in ws[3]:
+            cell.font = _XF(bold=True, color="FFFFFF")
+            cell.fill = _XP(start_color="222222", end_color="222222", fill_type="solid")
+            cell.alignment = _XA(horizontal="center")
+        # Data rows
+        for i, row in enumerate(rows):
+            ws.append(row)
+            row_fill = "181818" if i % 2 == 0 else "242424"
+            for cell in ws[i + 4]:
+                cell.fill = _XP(start_color=row_fill, end_color=row_fill, fill_type="solid")
+        # Auto-width
+        for col in ws.columns:
+            max_len = max((len(str(cell.value or "")) for cell in col), default=10)
+            ws.column_dimensions[col[0].column_letter].width = min(max_len + 2, 50)
+        xlsx_buf = _io.BytesIO()
+        wb.save(xlsx_buf)
+        xlsx_buf.seek(0)
+        return StreamingResponse(
+            iter([xlsx_buf.getvalue()]),
+            media_type="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+            headers={"Content-Disposition": f"attachment; filename={fname_base}.xlsx"},
+        )
+
+    elif fmt == "pdf":
+        from fpdf import FPDF as _FPDF
+
+        def _ps(s: str) -> str:
+            """Sanitize string for fpdf2 latin-1 built-in fonts."""
+            return (s.replace("\u2014", "-").replace("\u2013", "-")
+                     .replace("\u2018", "'").replace("\u2019", "'")
+                     .replace("\u201c", '"').replace("\u201d", '"')
+                     .encode("latin-1", errors="replace").decode("latin-1"))
+
+        pdf = _FPDF(orientation="L", unit="mm", format="A4")
+        pdf.set_auto_page_break(auto=True, margin=15)
+        pdf.set_margins(10, 10, 10)
+        pdf.add_page()
+        # Title
+        pdf.set_font("Helvetica", "B", 14)
+        pdf.set_text_color(232, 93, 4)
+        pdf.cell(0, 10, _ps(f"Rapport Export - {SOURCE_LABELS.get(source, source)}"), ln=True)
+        # Subtitle
+        pdf.set_font("Helvetica", "", 9)
+        pdf.set_text_color(150, 150, 150)
+        info = _ps(f"Periode : {period_label}   |   "
+                   f"Genere le {_dt.utcnow().strftime('%d/%m/%Y a %H:%M')} UTC   |   "
+                   f"{len(rows)} enregistrement(s)")
+        pdf.cell(0, 6, info, ln=True)
+        pdf.ln(3)
+        # Table layout (A4 landscape usable ≈ 277 mm)
+        n_cols = len(headers)
+        col_w = 277 / n_cols
+        # Header row
+        pdf.set_font("Helvetica", "B", 7)
+        pdf.set_fill_color(45, 45, 45)
+        pdf.set_text_color(232, 93, 4)
+        pdf.set_draw_color(80, 80, 80)
+        for h in headers:
+            pdf.cell(col_w, 6, _ps(str(h)[:22]), border=1, fill=True, align="C")
+        pdf.ln()
+        # Data rows (max 2 000 to keep PDF manageable)
+        pdf.set_font("Helvetica", "", 6)
+        for i, row in enumerate(rows[:2000]):
+            r, g, b = (28, 28, 28) if i % 2 == 0 else (38, 38, 38)
+            pdf.set_fill_color(r, g, b)
+            pdf.set_text_color(200, 200, 200)
+            for val in row:
+                pdf.cell(col_w, 5, _ps(str(val)[:22]), border=1, fill=True)
+            pdf.ln()
+        if len(rows) > 2000:
+            pdf.set_text_color(200, 80, 80)
+            pdf.set_font("Helvetica", "I", 8)
+            pdf.cell(0, 8,
+                     _ps(f"Avertissement : PDF tronque a 2 000 lignes (total : {len(rows)}). "
+                         "Utilisez CSV ou XLSX pour l'export complet."), ln=True)
+        pdf_bytes = bytes(pdf.output())
+        return StreamingResponse(
+            iter([pdf_bytes]),
+            media_type="application/pdf",
+            headers={"Content-Disposition": f"attachment; filename={fname_base}.pdf"},
+        )
+
+    else:  # csv (default)
+        buf = _io.StringIO()
+        writer = _csv.writer(buf)
+        writer.writerow(headers)
+        writer.writerows(rows)
+        buf.seek(0)
+        return StreamingResponse(
+            iter([buf.getvalue()]),
+            media_type="text/csv; charset=utf-8",
+            headers={"Content-Disposition": f"attachment; filename={fname_base}.csv"},
+        )
+
+
+@app.get("/api/reports/export/history")
+async def get_export_history():
+    """Return the list of recent in-memory export records (max 20)."""
+    return _export_history
+
+
+# Keep the old CSV route as a redirect-compatible alias
+@app.get("/api/reports/export/csv")
+async def export_production_csv_legacy(period: str = "week", db: Session = Depends(get_db)):
+    """Legacy CSV export alias — maps to new /api/reports/export/data."""
+    PERIOD_MAP = {"day": "today", "week": "last-7-days", "month": "last-30-days"}
+    return await export_data(period=PERIOD_MAP.get(period, "last-7-days"), source="counts", fmt="csv", db=db)
+
+
+# ─── Scheduled Exports ───────────────────────────────────────────────────────
+import os as _os
+from pathlib import Path as _Path
+
+_SCHED_EXPORT_DIR = _Path("backend/static/exports")
+_SCHED_KEYS = [
+    "export_sched_enabled", "export_sched_frequency", "export_sched_time",
+    "export_sched_day_of_week", "export_sched_day_of_month",
+    "export_sched_source", "export_sched_format", "export_sched_period", "export_sched_email",
+]
+_SCHED_DEFAULTS = {
+    "export_sched_enabled":      "false",
+    "export_sched_frequency":    "daily",
+    "export_sched_time":         "06:00",
+    "export_sched_day_of_week":  "1",
+    "export_sched_day_of_month": "1",
+    "export_sched_source":       "counts",
+    "export_sched_format":       "csv",
+    "export_sched_period":       "yesterday",
+    "export_sched_email":        "",
+}
+_schedule_task: asyncio.Task | None = None
+_scheduled_exports: list[dict] = []
+_last_sched_minute: str = ""
+
+
+def _get_sched_config(db) -> dict:
+    rows = db.query(models.SystemSetting).filter(
+        models.SystemSetting.key.in_(_SCHED_KEYS)
+    ).all()
+    cfg = dict(_SCHED_DEFAULTS)
+    cfg.update({r.key: r.value for r in rows})
+    return {
+        "enabled":        cfg["export_sched_enabled"] == "true",
+        "frequency":      cfg["export_sched_frequency"],
+        "time":           cfg["export_sched_time"],
+        "day_of_week":    int(cfg["export_sched_day_of_week"]),
+        "day_of_month":   int(cfg["export_sched_day_of_month"]),
+        "source":         cfg["export_sched_source"],
+        "format":         cfg["export_sched_format"],
+        "period":         cfg["export_sched_period"],
+        "email":          cfg["export_sched_email"],
+    }
+
+
+def _save_sched_config(db, payload: dict):
+    mapping = {
+        "enabled":        ("export_sched_enabled",      lambda v: "true" if v else "false"),
+        "frequency":      ("export_sched_frequency",    str),
+        "time":           ("export_sched_time",         str),
+        "day_of_week":    ("export_sched_day_of_week",  str),
+        "day_of_month":   ("export_sched_day_of_month", str),
+        "source":         ("export_sched_source",       str),
+        "format":         ("export_sched_format",       str),
+        "period":         ("export_sched_period",       str),
+        "email":          ("export_sched_email",        str),
+    }
+    for field, (key, conv) in mapping.items():
+        if field in payload:
+            row = db.query(models.SystemSetting).filter_by(key=key).first()
+            val = conv(payload[field])
+            if row:
+                row.value = val
+            else:
+                db.add(models.SystemSetting(key=key, value=val))
+    db.commit()
+
+
+def _do_scheduled_export(cfg: dict):
+    """Build export bytes and save to SCHED_EXPORT_DIR. Returns filename."""
+    from datetime import datetime as _dt
+    import csv as _csv, io as _io, json as _json
+
+    _SCHED_EXPORT_DIR.mkdir(parents=True, exist_ok=True)
+    source = cfg["source"]
+    fmt    = cfg["format"]
+    period = cfg["period"]
+    start, end, period_label = _export_period_range(period)
+    ts_now = _dt.utcnow().strftime("%Y%m%d_%H%M%S")
+
+    def _ts(v):
+        return v.isoformat() if hasattr(v, "isoformat") else (str(v) if v else "")
+
+    SOURCE_LABELS = {
+        "counts": "Comptages Bruts", "sessions": "Sessions",
+        "anomalies": "Anomalies / Alertes", "quality": "Qualité",
+    }
+
+    db = SessionLocal()
+    try:
+        if source == "counts":
+            rows_q = (db.query(models.DetectionLog)
+                      .filter(models.DetectionLog.timestamp >= start,
+                              models.DetectionLog.timestamp <= end)
+                      .order_by(models.DetectionLog.timestamp.asc()).all())
+            headers = ["ID", "Timestamp", "Session", "Statut", "Identifiant",
+                       "Score Détection", "Score Logo", "Score Couleur", "Intervalle (s)", "Capture URL"]
+            rows = [[l.id, _ts(l.timestamp), l.session_id, l.status, l.identifier or "",
+                     round(l.detection_score or 0, 4), round(l.logo_score or 0, 4),
+                     round(l.color_score or 0, 4), round(l.interval or 0, 3), l.capture_url or ""]
+                    for l in rows_q]
+            fname_base = f"auto_comptage_{period}_{ts_now}"
+        elif source == "sessions":
+            rows_q = (db.query(models.Session)
+                      .filter(models.Session.start_time >= start,
+                              models.Session.start_time <= end)
+                      .order_by(models.Session.start_time.asc()).all())
+            headers = ["ID", "Début", "Fin", "Total Sacs", "Sacs Rejetés", "Statut"]
+            rows = [[s.id, _ts(s.start_time), _ts(s.end_time),
+                     s.total_count or 0, s.rejected_count or 0, s.status]
+                    for s in rows_q]
+            fname_base = f"auto_sessions_{period}_{ts_now}"
+        elif source == "anomalies":
+            rows_q = (db.query(models.AlertHistory)
+                      .filter(models.AlertHistory.timestamp >= start,
+                              models.AlertHistory.timestamp <= end)
+                      .order_by(models.AlertHistory.timestamp.asc()).all())
+            headers = ["ID", "Timestamp", "Titre", "Message", "Type", "Lu"]
+            rows = [[a.id, _ts(a.timestamp), a.title or "", a.message or "",
+                     a.alert_type or "info", "oui" if a.is_read else "non"]
+                    for a in rows_q]
+            fname_base = f"auto_alertes_{period}_{ts_now}"
+        else:  # quality
+            rows_q = (db.query(models.QualityReview)
+                      .filter(models.QualityReview.created_at >= start,
+                              models.QualityReview.created_at <= end)
+                      .order_by(models.QualityReview.created_at.asc()).all())
+            headers = ["ID", "Log ID", "Action", "Statut Cible", "Notes", "Réviseur", "Date"]
+            rows = [[r.id, r.log_id, r.action, r.target_status or "",
+                     r.notes or "", r.reviewer or "", _ts(r.created_at)]
+                    for r in rows_q]
+            fname_base = f"auto_qualite_{period}_{ts_now}"
+    finally:
+        db.close()
+
+    fname = f"{fname_base}.{fmt}"
+    fpath = _SCHED_EXPORT_DIR / fname
+
+    if fmt == "json":
+        data = [dict(zip(headers, r)) for r in rows]
+        content = _json.dumps({"period": period_label, "source": source, "data": data},
+                              ensure_ascii=False, indent=2)
+        fpath.write_text(content, encoding="utf-8")
+    elif fmt == "xlsx":
+        import openpyxl as _xl
+        from openpyxl.styles import Font as _XF, PatternFill as _XP, Alignment as _XA
+        wb = _xl.Workbook()
+        ws = wb.active
+        ws.title = SOURCE_LABELS.get(source, source)[:31]
+        last_col = chr(64 + min(len(headers), 26))
+        ws.merge_cells(f"A1:{last_col}1")
+        tc = ws["A1"]
+        tc.value = f"Export — {SOURCE_LABELS.get(source, source)} — {period_label}"
+        tc.font = _XF(bold=True, size=12, color="FFFFFF")
+        tc.fill = _XP(start_color="E85D04", end_color="E85D04", fill_type="solid")
+        tc.alignment = _XA(horizontal="center")
+        ws.append(["Généré:", _dt.utcnow().strftime("%d/%m/%Y %H:%M UTC"), "Période:", period_label])
+        ws.append(headers)
+        for cell in ws[3]:
+            cell.font = _XF(bold=True, color="FFFFFF")
+            cell.fill = _XP(start_color="222222", end_color="222222", fill_type="solid")
+        for i, row in enumerate(rows):
+            ws.append(row)
+        wb.save(str(fpath))
+    elif fmt == "pdf":
+        from fpdf import FPDF as _FPDF
+
+        def _ps(s: str) -> str:
+            return (s.replace("\u2014", "-").replace("\u2013", "-")
+                     .replace("\u2018", "'").replace("\u2019", "'")
+                     .replace("\u201c", '"').replace("\u201d", '"')
+                     .encode("latin-1", errors="replace").decode("latin-1"))
+
+        pdf = _FPDF(orientation="L", unit="mm", format="A4")
+        pdf.set_auto_page_break(auto=True, margin=15)
+        pdf.set_margins(10, 10, 10)
+        pdf.add_page()
+        pdf.set_font("Helvetica", "B", 14)
+        pdf.set_text_color(232, 93, 4)
+        pdf.cell(0, 10, _ps(f"Rapport Export - {SOURCE_LABELS.get(source, source)}"), ln=True)
+        pdf.set_font("Helvetica", "", 9)
+        pdf.set_text_color(150, 150, 150)
+        pdf.cell(0, 6, _ps(f"Periode : {period_label}   |   {_dt.utcnow().strftime('%d/%m/%Y %H:%M')} UTC   |   {len(rows)} enreg."), ln=True)
+        pdf.ln(3)
+        col_w = 277 / len(headers)
+        pdf.set_font("Helvetica", "B", 7)
+        pdf.set_fill_color(45, 45, 45)
+        pdf.set_text_color(232, 93, 4)
+        for h in headers:
+            pdf.cell(col_w, 6, _ps(str(h)[:22]), border=1, fill=True, align="C")
+        pdf.ln()
+        pdf.set_font("Helvetica", "", 6)
+        for i, row in enumerate(rows[:2000]):
+            r, g, b = (28, 28, 28) if i % 2 == 0 else (38, 38, 38)
+            pdf.set_fill_color(r, g, b)
+            pdf.set_text_color(200, 200, 200)
+            for val in row:
+                pdf.cell(col_w, 5, _ps(str(val)[:22]), border=1, fill=True)
+            pdf.ln()
+        fpath.write_bytes(bytes(pdf.output()))
+    else:  # csv
+        buf = _io.StringIO()
+        writer = _csv.writer(buf)
+        writer.writerow(headers)
+        writer.writerows(rows)
+        fpath.write_text(buf.getvalue(), encoding="utf-8")
+
+    size_kb = round(fpath.stat().st_size / 1024, 1) if fpath.exists() else 0
+    _scheduled_exports.insert(0, {
+        "name": fname,
+        "source": SOURCE_LABELS.get(source, source),
+        "period_label": period_label,
+        "rows": len(rows),
+        "size_kb": size_kb,
+        "triggered_at": _dt.utcnow().isoformat(),
+        "format": fmt,
+        "download_url": f"/static/exports/{fname}",
+    })
+    if len(_scheduled_exports) > 10:
+        _scheduled_exports.pop()
+    return fname
+
+
+async def _scheduler_loop():
+    global _last_sched_minute
+    while True:
+        try:
+            await asyncio.sleep(30)
+            db = SessionLocal()
+            try:
+                cfg = _get_sched_config(db)
+            finally:
+                db.close()
+            if not cfg["enabled"]:
+                continue
+            from datetime import datetime as _dt
+            now = _dt.utcnow()
+            try:
+                th, tm = map(int, cfg["time"].split(":"))
+            except Exception:
+                continue
+            if now.hour != th or now.minute != tm:
+                continue
+            minute_key = f"{now.date().isoformat()}T{th:02d}:{tm:02d}"
+            if minute_key == _last_sched_minute:
+                continue
+            freq = cfg["frequency"]
+            if freq == "weekly" and now.isoweekday() != cfg["day_of_week"]:
+                continue
+            if freq == "monthly" and now.day != cfg["day_of_month"]:
+                continue
+            _last_sched_minute = minute_key
+            _do_scheduled_export(cfg)
+        except asyncio.CancelledError:
+            break
+        except Exception:
+            pass
+
+
+@app.get("/api/reports/export/schedule")
+async def get_schedule(db: Session = Depends(get_db)):
+    return _get_sched_config(db)
+
+
+@app.put("/api/reports/export/schedule")
+async def update_schedule(payload: dict, db: Session = Depends(get_db)):
+    _save_sched_config(db, payload)
+    return _get_sched_config(db)
+
+
+@app.post("/api/reports/export/schedule/run")
+async def run_schedule_now(db: Session = Depends(get_db)):
+    """Manually trigger a scheduled export immediately."""
+    cfg = _get_sched_config(db)
+    try:
+        fname = _do_scheduled_export(cfg)
+        return {"status": "ok", "file": fname}
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@app.get("/api/reports/export/scheduled")
+async def get_scheduled_exports():
+    return _scheduled_exports
 
 
 # ─── Timeline ────────────────────────────────────────────────────────────────

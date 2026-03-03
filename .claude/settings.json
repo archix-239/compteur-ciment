@@ -1,7 +1,17 @@
 {
   "permissions": {
     "allow": [
-      "Bash(xargs cat)"
+      "Bash(xargs cat)",
+      "Bash(python -c \"import openpyxl; print\\(''openpyxl ok''\\)\")",
+      "Bash(python -c \"import reportlab; print\\(''reportlab ok''\\)\")",
+      "Bash(python -c \"from fpdf import FPDF; print\\(''fpdf2 ok''\\)\")",
+      "Bash(python -c \"import apscheduler; print\\(''apscheduler ok''\\)\")",
+      "Bash(d:/DevEnix/Projets_Enix/Compteur_Automatique/compteur_ciment/venv/Scripts/python.exe -c \"import openpyxl; print\\(''openpyxl'', openpyxl.__version__\\)\")",
+      "Bash(d:/DevEnix/Projets_Enix/Compteur_Automatique/compteur_ciment/venv/Scripts/python.exe -c \"import reportlab; print\\(''reportlab'', reportlab.Version\\)\")",
+      "Bash(d:/DevEnix/Projets_Enix/Compteur_Automatique/compteur_ciment/venv/Scripts/python.exe -c \"from fpdf import FPDF; print\\(''fpdf2 ok''\\)\")",
+      "Bash(d:/DevEnix/Projets_Enix/Compteur_Automatique/compteur_ciment/venv/Scripts/python.exe -c \"import apscheduler; print\\(''apscheduler'', apscheduler.__version__\\)\")",
+      "Bash(d:/DevEnix/Projets_Enix/Compteur_Automatique/compteur_ciment/venv/Scripts/python.exe -c \"import pandas; print\\(''pandas'', pandas.__version__\\)\")",
+      "Bash(d:/DevEnix/Projets_Enix/Compteur_Automatique/compteur_ciment/venv/Scripts/pip.exe install openpyxl fpdf2)"
     ]
   }
 }
