@@ -115,7 +115,7 @@ Suivi de l'intégration réelle (remplacement des données fictives par des appe
 | 19 | Administration — API | En attente | — |
 | 20 | **Analytique — Performance (OEE)** | Fait | `GET /api/analytics/oee?hours=N` : OEE/TRS calculé depuis la BDD (disponibilité sessions, performance vs cible 1 100 sacs/h, qualité conformes/total). Sélecteur de période 6H / 24H / 7J / 30J. Graphique production réel + forecast (moyenne mobile 3 buckets) + cible. Camembert répartition du temps (production/micro-arrêts/pannes/inactivité). Recommandations IA dynamiques. Icônes `?` avec tooltip explicatif sur chaque indicateur. |
 | 21 | **Maintenance — Santé Système** | Fait | `GET /api/system/health` enrichi : CPU/RAM/disque réels (psutil), uptime OS réel, I/O réseau Rx/Tx (Mbps, delta entre appels), température CPU (Linux/Mac via psutil — N/A sur Windows), statut réel des 4 services (moteur YOLOv8 thread alive, FastAPI, SQLite, flux MJPEG), métriques BDD réelles (taille fichier, nb logs/sessions/alertes, temps requête mesuré), 10 derniers événements depuis AlertHistory + Sessions. Barres colorées (vert/jaune/rouge). Tooltips `?`. Actualisation auto toutes les 5s. |
-| 22 | Maintenance — Base de Données | En attente | — |
+| 22 | **Maintenance — Base de Données** | Fait | `GET /api/database/stats` : taille BDD, fragmentation (PRAGMA freelist/page_count), intégrité (quick_check), stats par table (rows, taille via dbstat, query_ms, dernier enregistrement), usage disque psutil. `POST /api/database/optimize` : VACUUM (sqlite3 raw, hors transaction) + ANALYZE + espace récupéré. `POST /api/database/reindex` : REINDEX complet + temps elapsed. `GET /api/database/backup` : téléchargement direct du fichier `.db`. `POST /api/database/archive` : suppression sessions terminées + logs antérieurs à la rétention configurée. `POST /api/database/purge` : suppression définitive logs + captures + quality_reviews (subquery). Dialog de confirmation avant actions destructives. Badge fragmentation coloré. Card statut santé dynamique (vert si saine, jaune si fragmentée). |
 | 23 | Maintenance — Diagnostics | En attente | — |
 | 24 | Intégration — Tiers | En attente | — |
 
@@ -155,6 +155,12 @@ Suivi de l'intégration réelle (remplacement des données fictives par des appe
 | `POST` | `/api/reports/export/schedule/run` | Déclenche immédiatement un export planifié et sauvegarde le fichier dans `backend/static/exports/` |
 | `GET` | `/api/reports/export/scheduled` | Historique des 10 derniers exports automatiques avec URL de téléchargement |
 | `GET` | `/api/reports/export/csv` | Alias legacy — redirige vers `/api/reports/export/data` (compatibilité ascendante) |
+| `GET` | `/api/database/stats` | Stats BDD : taille fichier, fragmentation, intégrité, usage disque, rows+taille+query_ms par table |
+| `POST` | `/api/database/optimize` | VACUUM (sqlite3 raw) + ANALYZE — retourne espace récupéré en KB |
+| `POST` | `/api/database/reindex` | REINDEX complet de tous les index SQLite |
+| `GET` | `/api/database/backup` | Téléchargement direct du fichier `.db` (FileResponse) |
+| `POST` | `/api/database/archive` | Supprime sessions terminées + logs antérieurs à `days` (défaut : retention_days) |
+| `POST` | `/api/database/purge` | Suppression définitive logs + captures + quality_reviews antérieurs à `days` |
 | `GET` | `/api/config/camera` | Récupère la configuration caméra actuelle |
 | `PUT` | `/api/config/camera` | Sauvegarde la configuration caméra |
 | `POST` | `/api/config/camera/test` | Teste la connexion à la source vidéo (vérification réelle via OpenCV) |

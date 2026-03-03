@@ -2620,6 +2620,267 @@ async def delete_sessions_batch(payload: dict, db: Session = Depends(get_db)):
     return {"deleted": deleted}
 
 
+# ─── Database Management ─────────────────────────────────────────────────────
+
+_DB_PATH = "./cement_counter.db"
+
+
+@app.get("/api/database/stats")
+async def get_database_stats(db: Session = Depends(get_db)):
+    """Real per-table stats + DB health (size, fragmentation, integrity)."""
+    import os as _os, time as _time, psutil as _psutil
+    from sqlalchemy import text
+    from datetime import datetime as _dt
+
+    # ── File size ─────────────────────────────────────────────────────────────
+    db_size_bytes = _os.path.getsize(_DB_PATH) if _os.path.exists(_DB_PATH) else 0
+    db_size_mb = round(db_size_bytes / (1024 * 1024), 2)
+
+    # ── Fragmentation (SQLite PRAGMA) ─────────────────────────────────────────
+    page_count  = db.execute(text("PRAGMA page_count")).scalar()  or 1
+    freelist    = db.execute(text("PRAGMA freelist_count")).scalar() or 0
+    page_size   = db.execute(text("PRAGMA page_size")).scalar()   or 4096
+    frag_pct    = round(freelist / page_count * 100, 1)
+
+    # ── Integrity check ───────────────────────────────────────────────────────
+    integrity = db.execute(text("PRAGMA quick_check")).scalar() or "ok"
+
+    # ── Per-table payload from dbstat virtual table ───────────────────────────
+    try:
+        dbstat_rows = db.execute(
+            text("SELECT name, sum(payload) FROM dbstat WHERE aggregate=TRUE GROUP BY name")
+        ).fetchall()
+        tbl_bytes: dict[str, int] = {r[0]: int(r[1] or 0) for r in dbstat_rows}
+    except Exception:
+        tbl_bytes = {}
+
+    # ── Row counts + last record timestamp ────────────────────────────────────
+    table_defs = [
+        ("detection_logs",  models.DetectionLog,  "timestamp"),
+        ("sessions",        models.Session,        "start_time"),
+        ("alert_history",   models.AlertHistory,   "timestamp"),
+        ("alert_rules",     models.AlertRule,       None),
+        ("quality_reviews", models.QualityReview,  "created_at"),
+        ("system_settings", models.SystemSetting,  None),
+        ("users",           models.User,            None),
+    ]
+
+    tables = []
+    for tname, model, ts_col in table_defs:
+        t0    = _time.perf_counter()
+        count = db.query(func.count()).select_from(model).scalar() or 0
+        q_ms  = round((_time.perf_counter() - t0) * 1000, 1)
+
+        size_kb = round(tbl_bytes.get(tname, 0) / 1024, 1)
+
+        last_ts = None
+        if ts_col:
+            try:
+                col = getattr(model, ts_col)
+                row = db.query(col).order_by(col.desc()).first()
+                if row and row[0]:
+                    last_ts = row[0].isoformat()
+            except Exception:
+                pass
+
+        status = "fragmented" if frag_pct > 20 else ("attention" if frag_pct > 10 else "optimized")
+        tables.append({
+            "name":        tname,
+            "rows":        count,
+            "size_kb":     size_kb,
+            "query_ms":    q_ms,
+            "last_record": last_ts,
+            "status":      status,
+        })
+
+    # ── Disk stats ────────────────────────────────────────────────────────────
+    try:
+        du = _psutil.disk_usage(".")
+        disk_total_gb = round(du.total / (1024**3), 1)
+        disk_used_gb  = round(du.used  / (1024**3), 1)
+        disk_pct      = round(du.percent, 1)
+    except Exception:
+        disk_total_gb = disk_used_gb = disk_pct = 0
+
+    # ── Retention setting ─────────────────────────────────────────────────────
+    ret_setting = db.query(models.SystemSetting).filter_by(key="data_retention_days").first()
+    retention_days = int(ret_setting.value) if ret_setting else 90
+
+    return {
+        "db_size_mb":      db_size_mb,
+        "db_size_bytes":   db_size_bytes,
+        "page_count":      page_count,
+        "freelist_count":  freelist,
+        "page_size":       page_size,
+        "fragmentation_pct": frag_pct,
+        "integrity":       integrity,
+        "disk_total_gb":   disk_total_gb,
+        "disk_used_gb":    disk_used_gb,
+        "disk_pct":        disk_pct,
+        "retention_days":  retention_days,
+        "tables":          tables,
+    }
+
+
+@app.post("/api/database/optimize")
+async def optimize_database():
+    """Run VACUUM + ANALYZE to compact the DB and refresh query planner stats."""
+    import os as _os, time as _time, sqlite3 as _sqlite3
+    from sqlalchemy import text, create_engine as _ce
+
+    size_before = _os.path.getsize(_DB_PATH) if _os.path.exists(_DB_PATH) else 0
+    t0 = _time.perf_counter()
+
+    # ANALYZE via SQLAlchemy
+    _analyze_engine = _ce("sqlite:///" + _DB_PATH, connect_args={"check_same_thread": False})
+    with _analyze_engine.connect() as conn:
+        conn.execute(text("PRAGMA analysis_limit=400"))
+        conn.execute(text("ANALYZE"))
+        conn.commit()
+    _analyze_engine.dispose()
+
+    # VACUUM must run outside a transaction — use raw sqlite3
+    _con = _sqlite3.connect(_DB_PATH, isolation_level=None)
+    _con.execute("VACUUM")
+    _con.close()
+
+    elapsed_ms  = round((_time.perf_counter() - t0) * 1000)
+    size_after  = _os.path.getsize(_DB_PATH) if _os.path.exists(_DB_PATH) else 0
+    saved_kb    = round((size_before - size_after) / 1024, 1)
+
+    return {
+        "status":        "ok",
+        "elapsed_ms":    elapsed_ms,
+        "size_before_mb": round(size_before / (1024 * 1024), 2),
+        "size_after_mb":  round(size_after  / (1024 * 1024), 2),
+        "saved_kb":      max(saved_kb, 0),
+    }
+
+
+@app.post("/api/database/reindex")
+async def reindex_database():
+    """Rebuild all SQLite indexes."""
+    import time as _time, sqlite3 as _sqlite3
+
+    t0 = _time.perf_counter()
+    _con = _sqlite3.connect(_DB_PATH, isolation_level=None)
+    _con.execute("REINDEX")
+    _con.close()
+    elapsed_ms = round((_time.perf_counter() - t0) * 1000)
+
+    return {"status": "ok", "elapsed_ms": elapsed_ms}
+
+
+@app.get("/api/database/backup")
+async def backup_database():
+    """Stream the SQLite .db file as a direct download."""
+    import os as _os
+    from datetime import datetime as _dt
+    from fastapi.responses import FileResponse
+
+    if not _os.path.exists(_DB_PATH):
+        raise HTTPException(status_code=404, detail="Fichier base de données introuvable")
+
+    fname = f"cement_counter_backup_{_dt.utcnow().strftime('%Y%m%d_%H%M%S')}.db"
+    return FileResponse(
+        path=_DB_PATH,
+        media_type="application/octet-stream",
+        filename=fname,
+        headers={"Content-Disposition": f"attachment; filename={fname}"},
+    )
+
+
+@app.post("/api/database/archive")
+async def archive_old_sessions(payload: dict = None, db: Session = Depends(get_db)):
+    """Delete completed sessions (and their logs) older than N days."""
+    from datetime import datetime as _dt, timedelta as _td
+
+    days   = int((payload or {}).get("days", 90))
+    cutoff = _dt.utcnow() - _td(days=days)
+
+    old_ids = [
+        r[0] for r in
+        db.query(models.Session.id)
+          .filter(models.Session.status == "completed", models.Session.end_time <= cutoff)
+          .all()
+    ]
+    if not old_ids:
+        return {"archived_sessions": 0, "archived_logs": 0, "cutoff": cutoff.isoformat(), "days": days}
+
+    deleted_logs = (
+        db.query(models.DetectionLog)
+          .filter(models.DetectionLog.session_id.in_(old_ids))
+          .delete(synchronize_session=False)
+    )
+    deleted_sessions = (
+        db.query(models.Session)
+          .filter(models.Session.id.in_(old_ids))
+          .delete(synchronize_session=False)
+    )
+    db.commit()
+
+    return {
+        "archived_sessions": deleted_sessions,
+        "archived_logs":     deleted_logs,
+        "cutoff":            cutoff.isoformat(),
+        "days":              days,
+    }
+
+
+@app.post("/api/database/purge")
+async def purge_old_logs(payload: dict = None, db: Session = Depends(get_db)):
+    """Hard-delete detection logs (+ their quality reviews) older than N days."""
+    import os as _os
+    from datetime import datetime as _dt, timedelta as _td
+
+    days   = int((payload or {}).get("days", 90))
+    cutoff = _dt.utcnow() - _td(days=days)
+
+    # Collect capture file paths before deletion
+    urls = [
+        r[0] for r in
+        db.query(models.DetectionLog.capture_url)
+          .filter(models.DetectionLog.timestamp <= cutoff,
+                  models.DetectionLog.capture_url.isnot(None))
+          .all()
+    ]
+
+    # Delete quality reviews linked to old logs (subquery)
+    old_ids_subq = (
+        db.query(models.DetectionLog.id)
+          .filter(models.DetectionLog.timestamp <= cutoff)
+          .subquery()
+    )
+    db.query(models.QualityReview)\
+      .filter(models.QualityReview.log_id.in_(old_ids_subq))\
+      .delete(synchronize_session=False)
+
+    # Delete the logs themselves
+    deleted = (
+        db.query(models.DetectionLog)
+          .filter(models.DetectionLog.timestamp <= cutoff)
+          .delete(synchronize_session=False)
+    )
+    db.commit()
+
+    # Try to remove orphaned capture files
+    deleted_files = 0
+    for url in urls:
+        try:
+            if url and _os.path.exists(url):
+                _os.remove(url)
+                deleted_files += 1
+        except Exception:
+            pass
+
+    return {
+        "purged_logs":  deleted,
+        "purged_files": deleted_files,
+        "cutoff":       cutoff.isoformat(),
+        "days":         days,
+    }
+
+
 # ─── Entrypoint ───────────────────────────────────────────────────────────────
 if __name__ == "__main__":
     import uvicorn
