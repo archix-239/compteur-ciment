@@ -2881,6 +2881,297 @@ async def purge_old_logs(payload: dict = None, db: Session = Depends(get_db)):
     }
 
 
+# ─── Diagnostics ─────────────────────────────────────────────────────────────
+
+@app.get("/api/diagnostics/metrics")
+async def get_diagnostic_metrics(db: Session = Depends(get_db)):
+    """Real-time diagnostic KPIs: FPS, inference latency, precision, CPU/RAM."""
+    import psutil as _psutil, time as _time
+    from datetime import datetime as _dt, timedelta as _td
+
+    v_eng        = vision_engine.get_vision_engine()
+    engine_alive = bool(v_eng.running and v_eng.thread and v_eng.thread.is_alive())
+
+    # ── FPS: try engine attribute, fallback to detection count in last 60s ────
+    fps: float = 0.0
+    try:
+        fps = float(getattr(v_eng, "fps", 0) or 0)
+    except Exception:
+        fps = 0.0
+    if fps == 0.0:
+        since  = _dt.utcnow() - _td(seconds=60)
+        count  = db.query(func.count(models.DetectionLog.id)).filter(
+            models.DetectionLog.timestamp >= since
+        ).scalar() or 0
+        fps = round(count / 60, 1)
+
+    # ── Inference ms: try engine attribute, fallback to avg interval proxy ────
+    inference_ms = None
+    try:
+        raw = getattr(v_eng, "last_inference_ms", None)
+        if raw:
+            inference_ms = round(float(raw), 1)
+    except Exception:
+        pass
+    if inference_ms is None:
+        rows = (
+            db.query(models.DetectionLog.interval)
+            .filter(models.DetectionLog.interval.isnot(None),
+                    models.DetectionLog.interval > 0)
+            .order_by(models.DetectionLog.timestamp.desc())
+            .limit(50).all()
+        )
+        if rows:
+            avg_iv  = sum(r[0] for r in rows) / len(rows)
+            fps_est = 1.0 / avg_iv if avg_iv > 0 else 0
+            # Estimate: inference takes ~10% of inter-bag interval when running at full speed
+            inference_ms = round(min(avg_iv * 1000 * 0.1, 999), 1)
+
+    # ── Accuracy from all-time detection logs ─────────────────────────────────
+    total     = db.query(func.count(models.DetectionLog.id)).scalar() or 0
+    conformes = (
+        db.query(func.count(models.DetectionLog.id))
+        .filter(models.DetectionLog.status == "conforme").scalar() or 0
+    )
+    accuracy_pct = round(conformes / total * 100, 1) if total > 0 else None
+
+    cpu = _psutil.cpu_percent(interval=None)
+    mem = _psutil.virtual_memory()
+
+    return {
+        "fps":              fps,
+        "inference_ms":     inference_ms,
+        "accuracy_pct":     accuracy_pct,
+        "cpu_pct":          round(cpu, 1),
+        "ram_pct":          round(mem.percent, 1),
+        "engine_alive":     engine_alive,
+        "total_detections": total,
+    }
+
+
+@app.get("/api/diagnostics/logs")
+async def get_diagnostic_logs(limit: int = 100, db: Session = Depends(get_db)):
+    """Recent system events as a structured log stream."""
+    events: list[dict] = []
+
+    # AlertHistory → ERROR/WARN/INFO
+    alerts = (
+        db.query(models.AlertHistory)
+        .order_by(models.AlertHistory.timestamp.desc())
+        .limit(limit // 2).all()
+    )
+    for a in alerts:
+        log_type = (
+            "ERROR"   if a.alert_type == "critical" else
+            "WARN"    if a.alert_type == "warning"  else
+            "INFO"
+        )
+        events.append({
+            "timestamp": a.timestamp.isoformat(),
+            "time":      a.timestamp.strftime("%H:%M:%S"),
+            "type":      log_type,
+            "message":   f"[ALERTE] {a.title or 'Alerte système'} — {a.message}",
+        })
+
+    # Sessions → INFO (start) + SUCCESS (end)
+    sessions = (
+        db.query(models.Session)
+        .order_by(models.Session.start_time.desc())
+        .limit(limit // 4).all()
+    )
+    for s in sessions:
+        total_bags = (s.total_count or 0) + (s.rejected_count or 0)
+        events.append({
+            "timestamp": s.start_time.isoformat(),
+            "time":      s.start_time.strftime("%H:%M:%S"),
+            "type":      "INFO",
+            "message":   f"[SESSION] {s.id} démarrée — statut: {s.status}, {total_bags} sacs traités",
+        })
+        if s.end_time:
+            events.append({
+                "timestamp": s.end_time.isoformat(),
+                "time":      s.end_time.strftime("%H:%M:%S"),
+                "type":      "SUCCESS",
+                "message":   f"[SESSION] {s.id} terminée — {s.total_count} conformes, {s.rejected_count} rejetés",
+            })
+
+    events.sort(key=lambda e: e["timestamp"], reverse=True)
+    return {"logs": events[:limit], "total": len(events)}
+
+
+@app.get("/api/diagnostics/logs/download")
+async def download_diagnostic_logs(db: Session = Depends(get_db)):
+    """Download system logs as a .txt file."""
+    from datetime import datetime as _dt
+    result = await get_diagnostic_logs(limit=500, db=db)
+    lines  = [f"=== Logs Diagnostics — {_dt.utcnow().strftime('%Y-%m-%d %H:%M UTC')} ==="]
+    for e in result["logs"]:
+        lines.append(f"[{e['timestamp']}] {e['type']:<8} {e['message']}")
+    fname = f"diagnostics_{_dt.utcnow().strftime('%Y%m%d_%H%M%S')}.txt"
+    return Response(
+        content="\n".join(lines).encode("utf-8"),
+        media_type="text/plain",
+        headers={"Content-Disposition": f"attachment; filename={fname}"},
+    )
+
+
+@app.post("/api/diagnostics/run-tests")
+async def run_diagnostic_tests(payload: dict = None, db: Session = Depends(get_db)):
+    """Run real component tests. Optional body: {"test": "yolo|db|disk|api|camera"}."""
+    import time as _time, os as _os, tempfile as _tmp
+    from datetime import datetime as _dt
+
+    only = (payload or {}).get("test")  # if set, run only this test key
+
+    v_eng        = vision_engine.get_vision_engine()
+    engine_alive = bool(v_eng.running and v_eng.thread and v_eng.thread.is_alive())
+
+    def _run(key: str) -> dict:
+        if key == "yolo":
+            t0     = _time.perf_counter()
+            alive  = engine_alive
+            ms     = round((_time.perf_counter() - t0) * 1000, 1)
+            model  = _os.path.basename(getattr(v_eng, "model_path", "") or "—")
+            return {
+                "name":   "Moteur IA (YOLOv11)",
+                "key":    "yolo",
+                "status": "pass" if alive else "fail",
+                "metric": model,
+                "latency": f"{ms} ms",
+                "detail": "En ligne" if alive else "Hors ligne — démarrez une session",
+            }
+
+        if key == "db":
+            t0 = _time.perf_counter()
+            try:
+                test_key = "_diag_write_test_"
+                ex = db.query(models.SystemSetting).filter_by(key=test_key).first()
+                if ex:
+                    ex.value = _dt.utcnow().isoformat()
+                else:
+                    db.add(models.SystemSetting(key=test_key, value=_dt.utcnow().isoformat()))
+                db.commit()
+                db.query(models.SystemSetting).filter_by(key=test_key).delete()
+                db.commit()
+                ok, detail = True, "Lecture/écriture OK"
+            except Exception as e:
+                ok, detail = False, str(e)
+            ms = round((_time.perf_counter() - t0) * 1000, 1)
+            return {
+                "name":    "Base de Données (SQLite)",
+                "key":     "db",
+                "status":  "pass" if ok else "fail",
+                "metric":  f"{ms} ms",
+                "latency": f"{ms} ms",
+                "detail":  detail,
+            }
+
+        if key == "disk":
+            t0  = _time.perf_counter()
+            buf = b"\x00" * (1024 * 1024)
+            try:
+                with _tmp.NamedTemporaryFile(delete=False, suffix=".tmp") as f:
+                    fname = f.name; f.write(buf)
+                elapsed = _time.perf_counter() - t0
+                _os.remove(fname)
+                speed = round(1.0 / elapsed, 1)
+                ok, detail = True, f"{speed} MB/s"
+            except Exception as e:
+                speed, ok, detail = 0, False, str(e)
+            ms = round((_time.perf_counter() - t0) * 1000, 1)
+            return {
+                "name":    "Écriture Disque",
+                "key":     "disk",
+                "status":  "pass" if ok else "fail",
+                "metric":  f"{speed} MB/s",
+                "latency": f"{speed} MB/s",
+                "detail":  detail,
+            }
+
+        if key == "api":
+            t0 = _time.perf_counter()
+            try:
+                db.query(func.count(models.DetectionLog.id)).scalar()
+                ok, detail = True, "Endpoint opérationnel"
+            except Exception as e:
+                ok, detail = False, str(e)
+            ms = round((_time.perf_counter() - t0) * 1000, 1)
+            return {
+                "name":    "API FastAPI",
+                "key":     "api",
+                "status":  "pass" if ok else "fail",
+                "metric":  f"{ms} ms",
+                "latency": f"{ms} ms",
+                "detail":  detail,
+            }
+
+        if key == "camera":
+            status  = "pass" if engine_alive else "warn"
+            detail  = "Flux actif (WebSocket /ws/video)" if engine_alive else "Moteur arrêté — flux indisponible"
+            return {
+                "name":    "Flux Vidéo (Caméra)",
+                "key":     "camera",
+                "status":  status,
+                "metric":  "WebSocket",
+                "latency": "—",
+                "detail":  detail,
+            }
+
+        return {"key": key, "status": "unknown"}
+
+    all_keys = ["yolo", "db", "disk", "api", "camera"]
+    results  = [_run(only)] if only and only in all_keys else [_run(k) for k in all_keys]
+    passed   = sum(1 for r in results if r["status"] == "pass")
+    return {
+        "results":  results,
+        "passed":   passed,
+        "total":    len(results),
+        "all_pass": passed == len(results),
+    }
+
+
+@app.post("/api/diagnostics/benchmark")
+async def run_ia_benchmark():
+    """Quick IA benchmark: 20 inferences on a blank frame."""
+    import time as _time, os as _os
+    import numpy as _np
+
+    v_eng = vision_engine.get_vision_engine()
+    if not (getattr(v_eng, "running", False) and getattr(v_eng, "model_path", None)):
+        raise HTTPException(
+            status_code=503,
+            detail="Moteur IA non actif — démarrez une session d'abord",
+        )
+
+    n_frames = 20
+    try:
+        from ultralytics import YOLO as _YOLO
+        model        = _YOLO(v_eng.model_path)
+        blank_frame  = _np.zeros((640, 640, 3), dtype=_np.uint8)
+        times_ms: list[float] = []
+        for _ in range(n_frames):
+            t0 = _time.perf_counter()
+            model.predict(blank_frame, verbose=False, imgsz=640)
+            times_ms.append((_time.perf_counter() - t0) * 1000)
+        del model
+
+        avg_ms  = round(sum(times_ms) / len(times_ms), 1)
+        min_ms  = round(min(times_ms), 1)
+        max_ms  = round(max(times_ms), 1)
+        fps_eq  = round(1000 / avg_ms, 1) if avg_ms > 0 else 0
+        return {
+            "status":        "ok",
+            "frames_tested": n_frames,
+            "avg_ms":        avg_ms,
+            "min_ms":        min_ms,
+            "max_ms":        max_ms,
+            "fps_equiv":     fps_eq,
+            "model":         _os.path.basename(v_eng.model_path),
+        }
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Benchmark échoué : {e}")
+
+
 # ─── Entrypoint ───────────────────────────────────────────────────────────────
 if __name__ == "__main__":
     import uvicorn

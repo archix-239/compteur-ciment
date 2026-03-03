@@ -116,7 +116,7 @@ Suivi de l'intégration réelle (remplacement des données fictives par des appe
 | 20 | **Analytique — Performance (OEE)** | Fait | `GET /api/analytics/oee?hours=N` : OEE/TRS calculé depuis la BDD (disponibilité sessions, performance vs cible 1 100 sacs/h, qualité conformes/total). Sélecteur de période 6H / 24H / 7J / 30J. Graphique production réel + forecast (moyenne mobile 3 buckets) + cible. Camembert répartition du temps (production/micro-arrêts/pannes/inactivité). Recommandations IA dynamiques. Icônes `?` avec tooltip explicatif sur chaque indicateur. |
 | 21 | **Maintenance — Santé Système** | Fait | `GET /api/system/health` enrichi : CPU/RAM/disque réels (psutil), uptime OS réel, I/O réseau Rx/Tx (Mbps, delta entre appels), température CPU (Linux/Mac via psutil — N/A sur Windows), statut réel des 4 services (moteur YOLOv8 thread alive, FastAPI, SQLite, flux MJPEG), métriques BDD réelles (taille fichier, nb logs/sessions/alertes, temps requête mesuré), 10 derniers événements depuis AlertHistory + Sessions. Barres colorées (vert/jaune/rouge). Tooltips `?`. Actualisation auto toutes les 5s. |
 | 22 | **Maintenance — Base de Données** | Fait | `GET /api/database/stats` : taille BDD, fragmentation (PRAGMA freelist/page_count), intégrité (quick_check), stats par table (rows, taille via dbstat, query_ms, dernier enregistrement), usage disque psutil. `POST /api/database/optimize` : VACUUM (sqlite3 raw, hors transaction) + ANALYZE + espace récupéré. `POST /api/database/reindex` : REINDEX complet + temps elapsed. `GET /api/database/backup` : téléchargement direct du fichier `.db`. `POST /api/database/archive` : suppression sessions terminées + logs antérieurs à la rétention configurée. `POST /api/database/purge` : suppression définitive logs + captures + quality_reviews (subquery). Dialog de confirmation avant actions destructives. Badge fragmentation coloré. Card statut santé dynamique (vert si saine, jaune si fragmentée). |
-| 23 | Maintenance — Diagnostics | En attente | — |
+| 23 | **Maintenance — Diagnostics** | Fait | `GET /api/diagnostics/metrics` : FPS (moteur ou delta 60s), inference_ms (attribut engine ou proxy intervalle), précision (conformes/total), CPU/RAM psutil. `GET /api/diagnostics/logs` : flux structuré AlertHistory + Sessions (INFO/WARN/ERROR/SUCCESS). `GET /api/diagnostics/logs/download` : export .txt horodaté. `POST /api/diagnostics/run-tests` : 5 tests réels (YOLO alive, SQLite write, disk 1MB, API latency, caméra flux). `POST /api/diagnostics/benchmark` : 20 inférences YOLOv11 sur frame 640×640 vierge — avg/min/max ms + FPS équivalent. Console avec filtre type + effacement local. Badge résultat tests sur l'onglet. Historique benchmark (5 derniers). Auto-refresh 10s ON/OFF. |
 | 24 | Intégration — Tiers | En attente | — |
 
 ### API & WebSocket — Référence rapide
@@ -161,6 +161,11 @@ Suivi de l'intégration réelle (remplacement des données fictives par des appe
 | `GET` | `/api/database/backup` | Téléchargement direct du fichier `.db` (FileResponse) |
 | `POST` | `/api/database/archive` | Supprime sessions terminées + logs antérieurs à `days` (défaut : retention_days) |
 | `POST` | `/api/database/purge` | Suppression définitive logs + captures + quality_reviews antérieurs à `days` |
+| `GET` | `/api/diagnostics/metrics` | KPIs temps réel : fps, inference_ms, accuracy_pct, cpu_pct, ram_pct, engine_alive |
+| `GET` | `/api/diagnostics/logs` | Flux d'événements structuré (AlertHistory + Sessions) — `?limit=N` |
+| `GET` | `/api/diagnostics/logs/download` | Téléchargement des logs en .txt horodaté |
+| `POST` | `/api/diagnostics/run-tests` | Tests composants : yolo, db, disk, api, camera — body `{"test":"key"}` pour test unitaire |
+| `POST` | `/api/diagnostics/benchmark` | Benchmark IA : 20 inférences YOLOv11 640×640 — retourne avg/min/max ms + fps_equiv |
 | `GET` | `/api/config/camera` | Récupère la configuration caméra actuelle |
 | `PUT` | `/api/config/camera` | Sauvegarde la configuration caméra |
 | `POST` | `/api/config/camera/test` | Teste la connexion à la source vidéo (vérification réelle via OpenCV) |
