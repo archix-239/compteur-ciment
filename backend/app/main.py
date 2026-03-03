@@ -169,6 +169,29 @@ async def lifespan(app: FastAPI):
         except Exception:
             pass  # Column already exists
 
+    # ── Seed cameras table from legacy SystemSettings (backward compat) ──────
+    _db_seed = SessionLocal()
+    try:
+        if _db_seed.query(models.Camera).count() == 0:
+            _s = {s.key: s.value for s in _db_seed.query(models.SystemSetting).filter(
+                models.SystemSetting.key.in_([
+                    "camera_source_type", "camera_url", "camera_resolution", "camera_fps"
+                ])
+            ).all()}
+            _db_seed.add(models.Camera(
+                name="Caméra Principale",
+                source_type=_s.get("camera_source_type", "webcam"),
+                url=_s.get("camera_url", "0"),
+                resolution=_s.get("camera_resolution", "720p"),
+                fps=int(_s.get("camera_fps", "30")),
+                is_active=True,
+            ))
+            _db_seed.commit()
+    except Exception as _e:
+        print(f"WARN: Camera seed failed: {_e}")
+    finally:
+        _db_seed.close()
+
     # ── Start scheduled export background task ────────────────────────────
     global _schedule_task
     _schedule_task = asyncio.create_task(_scheduler_loop())
@@ -3203,6 +3226,190 @@ async def run_ia_benchmark():
         }
     except Exception as e:
         raise HTTPException(status_code=500, detail=f"Benchmark échoué : {e}")
+
+
+# ─── Device Management ────────────────────────────────────────────────────────
+import datetime as _dt_dev
+
+def _cam_to_dict(c: models.Camera) -> dict:
+    return {
+        "id": c.id,
+        "name": c.name,
+        "source_type": c.source_type,
+        "url": c.url,
+        "resolution": c.resolution,
+        "fps": c.fps,
+        "is_active": c.is_active,
+        "notes": c.notes,
+        "created_at": c.created_at.isoformat() if c.created_at else None,
+        "last_tested_at": c.last_tested_at.isoformat() if c.last_tested_at else None,
+        "last_status": c.last_status,
+        "last_latency_ms": c.last_latency_ms,
+    }
+
+
+@app.get("/api/devices/cameras")
+async def list_cameras(db: Session = Depends(get_db)):
+    cameras = db.query(models.Camera).order_by(models.Camera.id).all()
+    return [_cam_to_dict(c) for c in cameras]
+
+
+@app.post("/api/devices/cameras", status_code=201)
+async def create_camera(payload: schemas.CameraDeviceCreate, db: Session = Depends(get_db)):
+    cam = models.Camera(
+        name=payload.name,
+        source_type=payload.source_type,
+        url=payload.url,
+        resolution=payload.resolution,
+        fps=payload.fps,
+        notes=payload.notes,
+        is_active=False,
+    )
+    db.add(cam)
+    db.commit()
+    db.refresh(cam)
+    return _cam_to_dict(cam)
+
+
+@app.put("/api/devices/cameras/{cam_id}")
+async def update_camera(cam_id: int, payload: schemas.CameraDeviceUpdate, db: Session = Depends(get_db)):
+    cam = db.query(models.Camera).filter(models.Camera.id == cam_id).first()
+    if not cam:
+        raise HTTPException(status_code=404, detail="Caméra introuvable")
+    for field, val in payload.model_dump(exclude_unset=True).items():
+        setattr(cam, field, val)
+    db.commit()
+    db.refresh(cam)
+    return _cam_to_dict(cam)
+
+
+@app.delete("/api/devices/cameras/{cam_id}")
+async def delete_camera(cam_id: int, db: Session = Depends(get_db)):
+    cam = db.query(models.Camera).filter(models.Camera.id == cam_id).first()
+    if not cam:
+        raise HTTPException(status_code=404, detail="Caméra introuvable")
+    if cam.is_active:
+        raise HTTPException(status_code=400, detail="Impossible de supprimer la caméra active. Activez une autre caméra d'abord.")
+    db.delete(cam)
+    db.commit()
+    return {"ok": True}
+
+
+@app.post("/api/devices/cameras/{cam_id}/test")
+async def test_camera_device(cam_id: int, db: Session = Depends(get_db)):
+    cam = db.query(models.Camera).filter(models.Camera.id == cam_id).first()
+    if not cam:
+        raise HTTPException(status_code=404, detail="Caméra introuvable")
+    config_obj = type("CC", (), {"source_type": cam.source_type, "url": cam.url})()
+    loop = asyncio.get_event_loop()
+    import time as _t_dev
+    t0 = _t_dev.perf_counter()
+    result = await loop.run_in_executor(None, _test_camera_sync, config_obj)
+    latency_ms = round((_t_dev.perf_counter() - t0) * 1000)
+    cam.last_tested_at = _dt_dev.datetime.utcnow()
+    cam.last_status = "online" if result.get("success") else "offline"
+    cam.last_latency_ms = latency_ms if result.get("success") else None
+    db.commit()
+    return {**result, "camera_id": cam_id, "latency_ms": latency_ms}
+
+
+@app.post("/api/devices/cameras/{cam_id}/activate")
+async def activate_camera(cam_id: int, db: Session = Depends(get_db)):
+    cam = db.query(models.Camera).filter(models.Camera.id == cam_id).first()
+    if not cam:
+        raise HTTPException(status_code=404, detail="Caméra introuvable")
+    # Deactivate all, then activate this one
+    db.query(models.Camera).update({"is_active": False})
+    cam.is_active = True
+    db.commit()
+    # Sync legacy SystemSettings keys for backward compat
+    _mapping = {
+        "camera_source_type": cam.source_type,
+        "camera_url": cam.url,
+        "camera_resolution": cam.resolution,
+        "camera_fps": str(cam.fps),
+    }
+    for key, value in _mapping.items():
+        s = db.query(models.SystemSetting).filter(models.SystemSetting.key == key).first()
+        if s:
+            s.value = value
+        else:
+            db.add(models.SystemSetting(key=key, value=value))
+    db.commit()
+    # Apply to running vision engine
+    v_engine = vision_engine.get_vision_engine()
+    new_source = int(cam.url) if cam.source_type == "webcam" and cam.url.isdigit() else cam.url
+    source_changed = v_engine.video_source != new_source
+    if source_changed:
+        v_engine.video_source = new_source
+    cam_settings = db.query(models.SystemSetting).filter(
+        models.SystemSetting.key.in_(["camera_brightness", "camera_contrast", "camera_autofocus"])
+    ).all()
+    cs = {s.key: s.value for s in cam_settings}
+    v_engine.apply_camera_settings(
+        resolution=cam.resolution,
+        fps=cam.fps,
+        brightness=int(cs.get("camera_brightness", "50")),
+        contrast=int(cs.get("camera_contrast", "65")),
+        autofocus=cs.get("camera_autofocus", "true").lower() == "true",
+    )
+    if v_engine.running and source_changed:
+        if v_engine.stop():
+            v_engine.start()
+    return _cam_to_dict(cam)
+
+
+@app.get("/api/devices/system")
+async def get_device_system():
+    import psutil as _ps_dev
+    cpu_pct = _ps_dev.cpu_percent(interval=0.2)
+    mem = _ps_dev.virtual_memory()
+    disk = _ps_dev.disk_usage(".")
+    temp_c = None
+    try:
+        temps = _ps_dev.sensors_temperatures()
+        if temps:
+            for key in ("coretemp", "cpu_thermal", "k10temp"):
+                if key in temps and temps[key]:
+                    temp_c = round(temps[key][0].current, 1)
+                    break
+    except Exception:
+        pass
+    return {
+        "cpu_pct": round(cpu_pct, 1),
+        "cpu_temp_c": temp_c,
+        "ram_used_gb": round(mem.used / 1024 ** 3, 1),
+        "ram_total_gb": round(mem.total / 1024 ** 3, 1),
+        "ram_pct": round(mem.percent, 1),
+        "disk_used_gb": round(disk.used / 1024 ** 3, 1),
+        "disk_total_gb": round(disk.total / 1024 ** 3, 1),
+        "disk_pct": round(disk.percent, 1),
+    }
+
+
+@app.get("/api/devices/services")
+async def get_device_services():
+    import sqlite3 as _sq3_dev
+    v_engine = vision_engine.get_vision_engine()
+    yolo_alive = False
+    try:
+        yolo_alive = v_engine.running and v_engine.thread is not None and v_engine.thread.is_alive()
+    except Exception:
+        pass
+    db_ok = False
+    try:
+        _c = _sq3_dev.connect(_DB_PATH, timeout=2)
+        _c.execute("SELECT 1")
+        _c.close()
+        db_ok = True
+    except Exception:
+        pass
+    return [
+        {"name": "Inférence YOLO", "key": "yolo",    "status": "running" if yolo_alive else "stopped"},
+        {"name": "Base de Données SQLite", "key": "sqlite",  "status": "running" if db_ok else "error"},
+        {"name": "API FastAPI",            "key": "fastapi", "status": "running"},
+        {"name": "Flux WebSocket/MJPEG",   "key": "mjpeg",   "status": "running" if v_engine.running else "warning"},
+    ]
 
 
 # ─── Entrypoint ───────────────────────────────────────────────────────────────

@@ -205,6 +205,22 @@ class QualityDashboardResponse(BaseModel):
     recentErrors: int
     reviewedCorrections: int
 
+class CameraDeviceCreate(BaseModel):
+    name: str
+    source_type: str = "webcam"
+    url: str = "0"
+    resolution: str = "720p"
+    fps: int = 30
+    notes: Optional[str] = None
+
+class CameraDeviceUpdate(BaseModel):
+    name: Optional[str] = None
+    source_type: Optional[str] = None
+    url: Optional[str] = None
+    resolution: Optional[str] = None
+    fps: Optional[int] = None
+    notes: Optional[str] = None
+
 class Token(BaseModel):
     access_token: str
     token_type: str

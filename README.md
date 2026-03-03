@@ -111,7 +111,7 @@ Suivi de l'intégration réelle (remplacement des données fictives par des appe
 | 15 | Rapports — Piste d'Audit | En attente | — |
 | 16 | Administration — Utilisateurs | En attente | — |
 | 17 | **Administration — Paramètres Système** | Partiel | `GET/PUT /api/system/general-settings` : identité site, fuseau, langue, préférences notifications, niveau log, rétention. Onglet **Alertes** connecté : canaux (son, email, Slack, téléphone superviseur) via `GET/PUT /api/alerts/settings` + aperçu des règles avec toggle via `PUT /api/alerts/rules/{id}`. Tooltips `?` sur chaque paramètre. *(Sécurité et Backup restent UI statique.)* |
-| 18 | Administration — Appareils | En attente | — |
+| 18 | **Administration — Appareils** | Fait | Nouveau modèle BDD `cameras` (multi-caméra). `GET /api/devices/cameras` : liste toutes les caméras (nom, type, URL, résolution, FPS, statut dernier test, latence). `POST /api/devices/cameras` : ajout caméra. `PUT /api/devices/cameras/{id}` : modification. `DELETE /api/devices/cameras/{id}` : suppression (interdit sur caméra active). `POST /api/devices/cameras/{id}/test` : connexion OpenCV réelle (met à jour `last_status`, `last_latency_ms`, `last_tested_at`). `POST /api/devices/cameras/{id}/activate` : bascule le moteur de vision vers cette caméra sans redémarrage (met à jour les SystemSettings legacy). `GET /api/devices/system` : CPU/RAM/disque réels (psutil), température CPU. `GET /api/devices/services` : statut 4 services (YOLO thread, SQLite, FastAPI, MJPEG). Seed automatique depuis SystemSettings au 1er démarrage. Modal ajout/édition. Dialog de confirmation suppression. Flash banner résultat. |
 | 19 | Administration — API | En attente | — |
 | 20 | **Analytique — Performance (OEE)** | Fait | `GET /api/analytics/oee?hours=N` : OEE/TRS calculé depuis la BDD (disponibilité sessions, performance vs cible 1 100 sacs/h, qualité conformes/total). Sélecteur de période 6H / 24H / 7J / 30J. Graphique production réel + forecast (moyenne mobile 3 buckets) + cible. Camembert répartition du temps (production/micro-arrêts/pannes/inactivité). Recommandations IA dynamiques. Icônes `?` avec tooltip explicatif sur chaque indicateur. |
 | 21 | **Maintenance — Santé Système** | Fait | `GET /api/system/health` enrichi : CPU/RAM/disque réels (psutil), uptime OS réel, I/O réseau Rx/Tx (Mbps, delta entre appels), température CPU (Linux/Mac via psutil — N/A sur Windows), statut réel des 4 services (moteur YOLOv8 thread alive, FastAPI, SQLite, flux MJPEG), métriques BDD réelles (taille fichier, nb logs/sessions/alertes, temps requête mesuré), 10 derniers événements depuis AlertHistory + Sessions. Barres colorées (vert/jaune/rouge). Tooltips `?`. Actualisation auto toutes les 5s. |
@@ -166,6 +166,14 @@ Suivi de l'intégration réelle (remplacement des données fictives par des appe
 | `GET` | `/api/diagnostics/logs/download` | Téléchargement des logs en .txt horodaté |
 | `POST` | `/api/diagnostics/run-tests` | Tests composants : **(1)** yolo `thread.is_alive()` **(2)** db écriture+suppression ms **(3)** disk write 1 MB MB/s **(4)** api COUNT latency ms **(5)** camera OpenCV réel (résolution+FPS) — body `{"test":"key"}` pour test unitaire |
 | `POST` | `/api/diagnostics/benchmark` | Benchmark IA : 20 inférences YOLOv11 640×640 — retourne avg/min/max ms + fps_equiv |
+| `GET` | `/api/devices/cameras` | Liste toutes les caméras configurées (nom, type, URL, statut, latence) |
+| `POST` | `/api/devices/cameras` | Crée une nouvelle caméra (name, source_type, url, resolution, fps, notes) |
+| `PUT` | `/api/devices/cameras/{id}` | Modifie les paramètres d'une caméra |
+| `DELETE` | `/api/devices/cameras/{id}` | Supprime une caméra (interdit si `is_active=true`) |
+| `POST` | `/api/devices/cameras/{id}/test` | Teste la connexion OpenCV réelle — met à jour last_status/last_latency_ms |
+| `POST` | `/api/devices/cameras/{id}/activate` | Active cette caméra : bascule le moteur de vision + synchro SystemSettings |
+| `GET` | `/api/devices/system` | Métriques serveur temps réel : cpu_pct, ram_used_gb, disk_pct, cpu_temp_c (psutil) |
+| `GET` | `/api/devices/services` | Statut des 4 services : YOLO (thread alive), SQLite (ping), FastAPI, MJPEG/WebSocket |
 | `GET` | `/api/config/camera` | Récupère la configuration caméra actuelle |
 | `PUT` | `/api/config/camera` | Sauvegarde la configuration caméra |
 | `POST` | `/api/config/camera/test` | Teste la connexion à la source vidéo (vérification réelle via OpenCV) |

@@ -69,3 +69,18 @@ class SystemSetting(Base):
     __tablename__ = "system_settings"
     key = Column(String, primary_key=True, index=True)
     value = Column(String)
+
+class Camera(Base):
+    __tablename__ = "cameras"
+    id = Column(Integer, primary_key=True, index=True)
+    name = Column(String, default="Caméra")
+    source_type = Column(String, default="webcam")  # webcam, rtsp, http, file
+    url = Column(String, default="0")
+    resolution = Column(String, default="720p")
+    fps = Column(Integer, default=30)
+    is_active = Column(Boolean, default=False)
+    notes = Column(String, nullable=True)
+    created_at = Column(DateTime, default=datetime.datetime.utcnow)
+    last_tested_at = Column(DateTime, nullable=True)
+    last_status = Column(String, nullable=True)   # online, offline, unknown
+    last_latency_ms = Column(Integer, nullable=True)
