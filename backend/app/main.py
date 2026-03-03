@@ -757,15 +757,161 @@ async def get_users(db: Session = Depends(get_db)):
 
 
 # ─── System Health ────────────────────────────────────────────────────────────
+
+# Module-level snapshot for network I/O delta (updated on each call)
+_net_snapshot: dict = {"time": 0.0, "bytes_recv": 0, "bytes_sent": 0}
+
+
 @app.get("/api/system/health")
-async def get_system_health():
-    import psutil
+async def get_system_health(db: Session = Depends(get_db)):
+    import psutil as _ps
+    import time as _time
+    import os as _os
+    global _net_snapshot
+
+    # ── Hardware ──────────────────────────────────────────────────────────────
+    cpu_pct = _ps.cpu_percent(interval=None)
+    mem     = _ps.virtual_memory()
+    try:
+        disk = _ps.disk_usage(".")
+    except Exception:
+        disk = _ps.disk_usage("/")
+
+    # ── Network I/O delta (rate between consecutive calls) ────────────────────
+    net     = _ps.net_io_counters()
+    now     = _time.time()
+    elapsed = now - _net_snapshot["time"]
+    if elapsed > 0.5:
+        recv_mbps = ((net.bytes_recv - _net_snapshot["bytes_recv"]) * 8) / (elapsed * 1_000_000)
+        sent_mbps = ((net.bytes_sent - _net_snapshot["bytes_sent"]) * 8) / (elapsed * 1_000_000)
+    else:
+        recv_mbps = sent_mbps = 0.0
+    _net_snapshot = {"time": now, "bytes_recv": net.bytes_recv, "bytes_sent": net.bytes_sent}
+
+    # ── Temperature (Linux/Mac only; graceful skip on Windows) ────────────────
+    temperature = None
+    try:
+        all_temps = _ps.sensors_temperatures()
+        if all_temps:
+            for key in ("coretemp", "cpu_thermal", "acpitz", "k10temp"):
+                if key in all_temps and all_temps[key]:
+                    temperature = round(all_temps[key][0].current, 1)
+                    break
+    except (AttributeError, NotImplementedError):
+        pass
+
+    # ── System uptime ─────────────────────────────────────────────────────────
+    uptime_sec  = int(_time.time() - _ps.boot_time())
+    uptime_days = uptime_sec // 86400
+    uptime_hrs  = (uptime_sec % 86400) // 3600
+    uptime_min  = (uptime_sec % 3600) // 60
+    uptime_str  = f"{uptime_days}j {uptime_hrs}h {uptime_min}m"
+
+    # ── Vision engine status ──────────────────────────────────────────────────
+    v_eng        = vision_engine.get_vision_engine()
+    engine_alive = bool(v_eng.running and v_eng.thread and v_eng.thread.is_alive())
+    model_name   = _os.path.basename(v_eng.model_path) if v_eng.model_path else "—"
+
+    # ── Database metrics ──────────────────────────────────────────────────────
+    db_path    = "./cement_counter.db"
+    db_size_mb = round(_os.path.getsize(db_path) / (1024 * 1024), 2) if _os.path.exists(db_path) else 0.0
+
+    t0             = _time.perf_counter()
+    total_logs     = db.query(models.DetectionLog).count()
+    query_time_ms  = round((_time.perf_counter() - t0) * 1000, 2)
+    total_sessions = db.query(models.Session).count()
+    active_sess    = db.query(models.Session).filter(models.Session.status == "active").count()
+    total_alerts   = db.query(models.AlertHistory).count()
+    unread_alerts  = db.query(models.AlertHistory).filter(models.AlertHistory.is_read == False).count()
+
+    # ── Services ──────────────────────────────────────────────────────────────
+    services = [
+        {
+            "name":   "Moteur Vision YOLOv8",
+            "status": "Opérationnel" if engine_alive else "Arrêté",
+            "ok":     engine_alive,
+            "uptime": uptime_str,
+            "detail": model_name,
+        },
+        {
+            "name":   "API FastAPI",
+            "status": "Opérationnel",
+            "ok":     True,
+            "uptime": uptime_str,
+            "detail": f"CPU {cpu_pct:.1f}%",
+        },
+        {
+            "name":   "Base de Données SQLite",
+            "status": "Opérationnel",
+            "ok":     True,
+            "uptime": uptime_str,
+            "detail": f"{db_size_mb} MB · {query_time_ms} ms/req",
+        },
+        {
+            "name":   "Flux Vidéo MJPEG",
+            "status": "Actif" if engine_alive else "Inactif",
+            "ok":     engine_alive,
+            "uptime": uptime_str,
+            "detail": "WebSocket /ws/video",
+        },
+    ]
+
+    # ── Recent system events (alerts + sessions) ──────────────────────────────
+    recent_alerts   = db.query(models.AlertHistory).order_by(
+        models.AlertHistory.timestamp.desc()
+    ).limit(5).all()
+    recent_sessions = db.query(models.Session).order_by(
+        models.Session.start_time.desc()
+    ).limit(3).all()
+
+    events: list = []
+    for a in recent_alerts:
+        lvl = "WARN" if a.alert_type == "warning" else ("ERROR" if a.alert_type == "critical" else "INFO")
+        events.append({
+            "timestamp": a.timestamp.isoformat(),
+            "level":     lvl,
+            "message":   f"[Alerte] {a.title or 'Alerte'} — {a.message}",
+        })
+    for s in recent_sessions:
+        total = (s.total_count or 0) + (s.rejected_count or 0)
+        events.append({
+            "timestamp": s.start_time.isoformat(),
+            "level":     "INFO",
+            "message":   f"Session {s.id} — {total} sacs traités (statut: {s.status})",
+        })
+    events.sort(key=lambda e: e["timestamp"], reverse=True)
+    events = events[:10]
+
     return {
-        "status": "online",
-        "cpu": psutil.cpu_percent(),
-        "memory": psutil.virtual_memory().percent,
-        "disk": psutil.disk_usage('/').percent,
-        "uptime": "12j 4h"
+        "status":    "online",
+        "uptime":    uptime_str,
+        "uptime_sec": uptime_sec,
+        # Hardware
+        "cpu":     round(cpu_pct, 1),
+        "memory":  round(mem.percent, 1),
+        "memory_total_gb": round(mem.total / (1024 ** 3), 1),
+        "memory_used_gb":  round(mem.used  / (1024 ** 3), 1),
+        "disk":    round(disk.percent, 1),
+        "disk_total_gb": round(disk.total / (1024 ** 3), 1),
+        "disk_used_gb":  round(disk.used  / (1024 ** 3), 1),
+        "disk_free_gb":  round(disk.free  / (1024 ** 3), 1),
+        "temperature": temperature,
+        "net_recv_mbps": round(max(0.0, recv_mbps), 2),
+        "net_sent_mbps": round(max(0.0, sent_mbps), 2),
+        # Services
+        "services": services,
+        # DB stats
+        "db": {
+            "size_mb":         db_size_mb,
+            "total_logs":      total_logs,
+            "total_sessions":  total_sessions,
+            "active_sessions": active_sess,
+            "total_alerts":    total_alerts,
+            "unread_alerts":   unread_alerts,
+            "query_time_ms":   query_time_ms,
+        },
+        # Events log
+        "events": events,
     }
 
 
