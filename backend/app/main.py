@@ -3106,15 +3106,48 @@ async def run_diagnostic_tests(payload: dict = None, db: Session = Depends(get_d
             }
 
         if key == "camera":
-            status  = "pass" if engine_alive else "warn"
-            detail  = "Flux actif (WebSocket /ws/video)" if engine_alive else "Moteur arrêté — flux indisponible"
+            # Read saved camera config from SystemSettings
+            cam_cfg = {
+                s.key: s.value for s in
+                db.query(models.SystemSetting).filter(
+                    models.SystemSetting.key.in_(["camera_source_type", "camera_url"])
+                ).all()
+            }
+            src_type = cam_cfg.get("camera_source_type", "webcam")
+            cam_url  = cam_cfg.get("camera_url", "0")
+
+            if not cam_url:
+                return {
+                    "name":    "Flux Vidéo (Caméra)",
+                    "key":     "camera",
+                    "status":  "warn",
+                    "metric":  "—",
+                    "latency": "—",
+                    "detail":  "Aucune source caméra configurée",
+                }
+
+            # Build a minimal CameraConfig-like object and call _test_camera_sync
+            import importlib as _imp, time as _time2
+            cam_config_obj = type("CC", (), {"source_type": src_type, "url": cam_url})()
+            t0 = _time2.perf_counter()
+            try:
+                cam_result = _test_camera_sync(cam_config_obj)
+            except Exception as e:
+                cam_result = {"success": False, "message": str(e)}
+            ms = round((_time2.perf_counter() - t0) * 1000)
+
+            ok     = cam_result.get("success", False)
+            res    = cam_result.get("resolution_detected", "—")
+            fps_v  = cam_result.get("fps_detected", "—")
+            msg    = cam_result.get("message", "—")
+            metric = f"{res} @ {fps_v} FPS" if ok else "Échec"
             return {
                 "name":    "Flux Vidéo (Caméra)",
                 "key":     "camera",
-                "status":  status,
-                "metric":  "WebSocket",
-                "latency": "—",
-                "detail":  detail,
+                "status":  "pass" if ok else "fail",
+                "metric":  metric,
+                "latency": f"{ms} ms",
+                "detail":  msg,
             }
 
         return {"key": key, "status": "unknown"}
