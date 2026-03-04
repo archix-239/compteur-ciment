@@ -9,8 +9,20 @@ class User(Base):
     username = Column(String, unique=True, index=True)
     hashed_password = Column(String)
     full_name = Column(String)
-    role = Column(String, default="operator") # operator, admin
+    role = Column(String, default="operator") # operator, admin, viewer
     is_active = Column(Boolean, default=True)
+    last_login = Column(DateTime, nullable=True)
+    login_count = Column(Integer, default=0)
+
+class UserActivity(Base):
+    __tablename__ = "user_activities"
+    id = Column(Integer, primary_key=True, index=True)
+    user_id = Column(Integer, ForeignKey("users.id", ondelete="SET NULL"), nullable=True)
+    username = Column(String)
+    timestamp = Column(DateTime, default=datetime.datetime.utcnow)
+    action = Column(String, default="login")    # login | failed_login | logout | created | updated | deleted | password_changed
+    ip_address = Column(String, nullable=True)
+    user_agent = Column(String, nullable=True)
 
 class Session(Base):
     __tablename__ = "sessions"

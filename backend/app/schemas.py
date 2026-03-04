@@ -13,6 +13,26 @@ class UserCreate(UserBase):
 class User(UserBase):
     id: int
     is_active: bool
+    last_login: Optional[datetime] = None
+    login_count: int = 0
+    class Config:
+        from_attributes = True
+
+class UserUpdate(BaseModel):
+    full_name: Optional[str] = None
+    role: Optional[str] = None
+    is_active: Optional[bool] = None
+
+class UserPasswordChange(BaseModel):
+    new_password: str
+
+class UserActivityOut(BaseModel):
+    id: int
+    username: str
+    timestamp: datetime
+    action: str
+    ip_address: Optional[str] = None
+    user_agent: Optional[str] = None
     class Config:
         from_attributes = True
 

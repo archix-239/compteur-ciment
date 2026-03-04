@@ -1,4 +1,4 @@
-from fastapi import FastAPI, Depends, HTTPException, status, Response, WebSocket, WebSocketDisconnect, UploadFile, File
+from fastapi import FastAPI, Depends, HTTPException, status, Response, WebSocket, WebSocketDisconnect, UploadFile, File, Request
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.security import OAuth2PasswordRequestForm
 from fastapi.staticfiles import StaticFiles
@@ -156,11 +156,13 @@ async def lifespan(app: FastAPI):
     finally:
         db.close()
 
-    # ── DB Migration: add alert columns if missing (SQLite ALTER TABLE) ────────
+    # ── DB Migration: add missing columns (SQLite ALTER TABLE) ───────────────
     from sqlalchemy import text as _sa_text
     for _stmt in [
         "ALTER TABLE alert_history ADD COLUMN alert_type TEXT NOT NULL DEFAULT 'info'",
         "ALTER TABLE alert_history ADD COLUMN title TEXT",
+        "ALTER TABLE users ADD COLUMN last_login DATETIME",
+        "ALTER TABLE users ADD COLUMN login_count INTEGER DEFAULT 0",
     ]:
         try:
             with engine.connect() as _conn:
@@ -1298,10 +1300,101 @@ async def get_logs(
 
 
 # ─── Users ────────────────────────────────────────────────────────────────────
-@app.get("/api/users/", response_model=List[schemas.User])
+import datetime as _dt_users
+
+def _user_to_dict(u: models.User) -> dict:
+    return {
+        "id": u.id,
+        "username": u.username,
+        "full_name": u.full_name,
+        "role": u.role,
+        "is_active": u.is_active,
+        "last_login": u.last_login.isoformat() if u.last_login else None,
+        "login_count": u.login_count or 0,
+    }
+
+@app.get("/api/users/")
 async def get_users(db: Session = Depends(get_db)):
-    users = db.query(models.User).all()
-    return users
+    return [_user_to_dict(u) for u in db.query(models.User).order_by(models.User.id).all()]
+
+
+@app.post("/api/users/", status_code=201)
+async def create_user(payload: schemas.UserCreate, db: Session = Depends(get_db)):
+    if db.query(models.User).filter(models.User.username == payload.username).first():
+        raise HTTPException(status_code=409, detail="Nom d'utilisateur déjà pris")
+    user = models.User(
+        username=payload.username,
+        full_name=payload.full_name,
+        role=payload.role,
+        hashed_password=auth.get_password_hash(payload.password),
+        is_active=True,
+        login_count=0,
+    )
+    db.add(user)
+    db.flush()
+    db.add(models.UserActivity(user_id=user.id, username=user.username, action="created"))
+    db.commit()
+    db.refresh(user)
+    return _user_to_dict(user)
+
+
+@app.put("/api/users/{user_id}")
+async def update_user(user_id: int, payload: schemas.UserUpdate, db: Session = Depends(get_db)):
+    user = db.query(models.User).filter(models.User.id == user_id).first()
+    if not user:
+        raise HTTPException(status_code=404, detail="Utilisateur introuvable")
+    for field, val in payload.model_dump(exclude_unset=True).items():
+        setattr(user, field, val)
+    db.add(models.UserActivity(user_id=user.id, username=user.username, action="updated"))
+    db.commit()
+    db.refresh(user)
+    return _user_to_dict(user)
+
+
+@app.patch("/api/users/{user_id}/password")
+async def change_password(user_id: int, payload: schemas.UserPasswordChange, db: Session = Depends(get_db)):
+    user = db.query(models.User).filter(models.User.id == user_id).first()
+    if not user:
+        raise HTTPException(status_code=404, detail="Utilisateur introuvable")
+    if len(payload.new_password) < 6:
+        raise HTTPException(status_code=400, detail="Le mot de passe doit contenir au moins 6 caractères")
+    user.hashed_password = auth.get_password_hash(payload.new_password)
+    db.add(models.UserActivity(user_id=user.id, username=user.username, action="password_changed"))
+    db.commit()
+    return {"ok": True}
+
+
+@app.delete("/api/users/{user_id}")
+async def delete_user(user_id: int, db: Session = Depends(get_db)):
+    user = db.query(models.User).filter(models.User.id == user_id).first()
+    if not user:
+        raise HTTPException(status_code=404, detail="Utilisateur introuvable")
+    uname = user.username
+    db.delete(user)
+    db.add(models.UserActivity(user_id=None, username=uname, action="deleted"))
+    db.commit()
+    return {"ok": True}
+
+
+@app.get("/api/users/activity")
+async def get_user_activity(limit: int = 50, db: Session = Depends(get_db)):
+    rows = (
+        db.query(models.UserActivity)
+        .order_by(models.UserActivity.timestamp.desc())
+        .limit(limit)
+        .all()
+    )
+    return [
+        {
+            "id": r.id,
+            "username": r.username,
+            "timestamp": r.timestamp.isoformat(),
+            "action": r.action,
+            "ip_address": r.ip_address,
+            "user_agent": r.user_agent,
+        }
+        for r in rows
+    ]
 
 
 # ─── System Health ────────────────────────────────────────────────────────────
@@ -2523,14 +2616,37 @@ async def update_line_config(payload: dict, db: Session = Depends(get_db)):
 
 # ─── Auth ─────────────────────────────────────────────────────────────────────
 @app.post("/token", response_model=schemas.Token)
-async def login_for_access_token(form_data: OAuth2PasswordRequestForm = Depends(), db: Session = Depends(get_db)):
+async def login_for_access_token(request: Request, form_data: OAuth2PasswordRequestForm = Depends(), db: Session = Depends(get_db)):
+    import datetime as _dt_auth
     user = db.query(models.User).filter(models.User.username == form_data.username).first()
+    ip = request.client.host if request.client else None
+    ua = request.headers.get("user-agent")
     if not user or not auth.verify_password(form_data.password, user.hashed_password):
+        # Record failed login
+        db.add(models.UserActivity(
+            user_id=user.id if user else None,
+            username=form_data.username,
+            action="failed_login",
+            ip_address=ip,
+            user_agent=ua,
+        ))
+        db.commit()
         raise HTTPException(
             status_code=status.HTTP_401_UNAUTHORIZED,
             detail="Incorrect username or password",
             headers={"WWW-Authenticate": "Bearer"},
         )
+    # Record successful login + update user stats
+    user.last_login = _dt_auth.datetime.utcnow()
+    user.login_count = (user.login_count or 0) + 1
+    db.add(models.UserActivity(
+        user_id=user.id,
+        username=user.username,
+        action="login",
+        ip_address=ip,
+        user_agent=ua,
+    ))
+    db.commit()
     access_token_expires = timedelta(minutes=auth.ACCESS_TOKEN_EXPIRE_MINUTES)
     access_token = auth.create_access_token(
         data={"sub": user.username}, expires_delta=access_token_expires
