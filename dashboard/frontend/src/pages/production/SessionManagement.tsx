@@ -1,11 +1,27 @@
 import { useState, useEffect, useMemo } from 'react';
 import { API_URL } from '@/lib/api';
-import { Clock, Play, Square, History, BarChart2, Calendar, Search } from 'lucide-react';
+import { Clock, Play, Square, History, BarChart2, Search, Trash2, XCircle, Loader2 } from 'lucide-react';
 import { Card } from '@/components/ui/card';
 import { Button } from '@/components/ui/button';
 import { Badge } from '@/components/ui/badge';
 import { Input } from '@/components/ui/input';
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@/components/ui/table';
+import {
+  AlertDialog,
+  AlertDialogAction,
+  AlertDialogCancel,
+  AlertDialogContent,
+  AlertDialogDescription,
+  AlertDialogFooter,
+  AlertDialogHeader,
+  AlertDialogTitle,
+} from '@/components/ui/alert-dialog';
+import {
+  DropdownMenu,
+  DropdownMenuContent,
+  DropdownMenuItem,
+  DropdownMenuTrigger,
+} from '@/components/ui/dropdown-menu';
 
 interface SessionItem {
   id: string;
@@ -21,10 +37,18 @@ interface SessionResponse {
   total: number;
 }
 
+type StatusFilter = 'all' | 'active' | 'completed';
+
 export default function SessionManagement() {
   const [sessions, setSessions] = useState<SessionItem[]>([]);
   const [activeSession, setActiveSession] = useState<SessionItem | null>(null);
   const [search, setSearch] = useState('');
+  const [statusFilter, setStatusFilter] = useState<StatusFilter>('all');
+  const [actionLoading, setActionLoading] = useState<string | null>(null);
+
+  // Dialogs
+  const [deleteTarget, setDeleteTarget] = useState<SessionItem | null>(null);
+  const [clearTarget, setClearTarget] = useState<SessionItem | null>(null);
 
   const fetchSessions = () => {
     fetch(`${API_URL}/sessions/?page=1&page_size=50`)
@@ -58,10 +82,41 @@ export default function SessionManagement() {
       .catch(err => console.error('Error stopping session:', err));
   };
 
-  const filteredSessions = useMemo(
-    () => sessions.filter((s) => s.id.toLowerCase().includes(search.toLowerCase())),
-    [sessions, search],
-  );
+  const confirmDelete = async () => {
+    if (!deleteTarget) return;
+    setActionLoading(deleteTarget.id + '-delete');
+    try {
+      await fetch(`${API_URL}/api/sessions/${deleteTarget.id}`, { method: 'DELETE' });
+      fetchSessions();
+    } catch (err) {
+      console.error('Error deleting session:', err);
+    } finally {
+      setActionLoading(null);
+      setDeleteTarget(null);
+    }
+  };
+
+  const confirmClear = async () => {
+    if (!clearTarget) return;
+    setActionLoading(clearTarget.id + '-clear');
+    try {
+      await fetch(`${API_URL}/api/sessions/${clearTarget.id}/logs`, { method: 'DELETE' });
+      fetchSessions();
+    } catch (err) {
+      console.error('Error clearing session logs:', err);
+    } finally {
+      setActionLoading(null);
+      setClearTarget(null);
+    }
+  };
+
+  const filteredSessions = useMemo(() => {
+    return sessions.filter((s) => {
+      const matchSearch = s.id.toLowerCase().includes(search.toLowerCase());
+      const matchStatus = statusFilter === 'all' || s.status === statusFilter;
+      return matchSearch && matchStatus;
+    });
+  }, [sessions, search, statusFilter]);
 
   const activeRate = useMemo(() => {
     if (!activeSession) return 0;
@@ -73,6 +128,12 @@ export default function SessionManagement() {
     () => sessions.reduce((acc, s) => acc + s.total_count + s.rejected_count, 0),
     [sessions],
   );
+
+  const FILTER_LABELS: Record<StatusFilter, string> = {
+    all: 'Tous les statuts',
+    active: 'En cours',
+    completed: 'Terminés',
+  };
 
   return (
     <div className="p-6 space-y-6">
@@ -138,7 +199,18 @@ export default function SessionManagement() {
               <Search className="absolute left-2.5 top-1/2 -translate-y-1/2 w-3.5 h-3.5 text-zinc-500" />
               <Input placeholder="Rechercher une session..." value={search} onChange={(e) => setSearch(e.target.value)} className="h-8 pl-8 w-[200px] bg-zinc-900 border-zinc-800 text-xs text-white" />
             </div>
-            <Button variant="outline" size="icon" className="h-8 w-8 border-zinc-800 text-zinc-400 hover:text-white"><Calendar className="w-3.5 h-3.5" /></Button>
+            <DropdownMenu>
+              <DropdownMenuTrigger asChild>
+                <Button variant="outline" size="sm" className="h-8 border-zinc-800 text-zinc-400 hover:text-white text-xs">
+                  {FILTER_LABELS[statusFilter]}
+                </Button>
+              </DropdownMenuTrigger>
+              <DropdownMenuContent className="bg-zinc-900 border-zinc-800 text-white">
+                <DropdownMenuItem className="hover:bg-zinc-800 cursor-pointer text-xs" onClick={() => setStatusFilter('all')}>Tous les statuts</DropdownMenuItem>
+                <DropdownMenuItem className="hover:bg-zinc-800 cursor-pointer text-xs" onClick={() => setStatusFilter('active')}>En cours</DropdownMenuItem>
+                <DropdownMenuItem className="hover:bg-zinc-800 cursor-pointer text-xs" onClick={() => setStatusFilter('completed')}>Terminés</DropdownMenuItem>
+              </DropdownMenuContent>
+            </DropdownMenu>
           </div>
         </div>
 
@@ -153,10 +225,17 @@ export default function SessionManagement() {
                 <TableHead className="text-zinc-500 text-[11px] font-bold uppercase text-center">Sacs Comptés</TableHead>
                 <TableHead className="text-zinc-500 text-[11px] font-bold uppercase text-center">Débit Moyen</TableHead>
                 <TableHead className="text-zinc-500 text-[11px] font-bold uppercase text-right">Statut</TableHead>
+                <TableHead className="text-zinc-500 text-[11px] font-bold uppercase text-right">Actions</TableHead>
               </TableRow>
             </TableHeader>
             <TableBody>
-              {filteredSessions.map((session) => {
+              {filteredSessions.length === 0 ? (
+                <TableRow>
+                  <TableCell colSpan={8} className="text-center py-8 text-zinc-500 text-sm">
+                    Aucune session trouvée.
+                  </TableCell>
+                </TableRow>
+              ) : filteredSessions.map((session) => {
                 const start = new Date(session.start_time).getTime();
                 const end = session.end_time ? new Date(session.end_time).getTime() : Date.now();
                 const diffSec = Math.max(0, Math.floor((end - start) / 1000));
@@ -164,6 +243,7 @@ export default function SessionManagement() {
                 const hh = String(Math.floor(diffSec / 3600)).padStart(2, '0');
                 const mm = String(Math.floor((diffSec % 3600) / 60)).padStart(2, '0');
                 const ss = String(diffSec % 60).padStart(2, '0');
+                const isLoading = actionLoading?.startsWith(session.id);
 
                 return (
                   <TableRow key={session.id} className="border-zinc-800 hover:bg-zinc-800/30 transition-colors">
@@ -178,6 +258,36 @@ export default function SessionManagement() {
                         <span className="text-[9px] font-bold uppercase tracking-widest">{session.status === 'active' ? 'En cours' : 'Terminé'}</span>
                       </Badge>
                     </TableCell>
+                    <TableCell className="text-right">
+                      <div className="flex gap-1 justify-end">
+                        {isLoading ? (
+                          <Loader2 className="w-4 h-4 animate-spin text-zinc-500" />
+                        ) : (
+                          <>
+                            <Button
+                              size="icon"
+                              variant="ghost"
+                              className="h-7 w-7 text-zinc-500 hover:text-yellow-400"
+                              title="Vider les logs"
+                              onClick={() => setClearTarget(session)}
+                              disabled={session.status === 'active'}
+                            >
+                              <XCircle className="w-3.5 h-3.5" />
+                            </Button>
+                            <Button
+                              size="icon"
+                              variant="ghost"
+                              className="h-7 w-7 text-zinc-500 hover:text-red-400"
+                              title="Supprimer la session"
+                              onClick={() => setDeleteTarget(session)}
+                              disabled={session.status === 'active'}
+                            >
+                              <Trash2 className="w-3.5 h-3.5" />
+                            </Button>
+                          </>
+                        )}
+                      </div>
+                    </TableCell>
                   </TableRow>
                 );
               })}
@@ -185,6 +295,38 @@ export default function SessionManagement() {
           </Table>
         </div>
       </Card>
+
+      {/* Delete session dialog */}
+      <AlertDialog open={!!deleteTarget} onOpenChange={(o) => !o && setDeleteTarget(null)}>
+        <AlertDialogContent className="bg-zinc-950 border-zinc-800 text-white">
+          <AlertDialogHeader>
+            <AlertDialogTitle>Supprimer la session ?</AlertDialogTitle>
+            <AlertDialogDescription className="text-zinc-400">
+              La session <span className="font-mono text-white">{deleteTarget?.id}</span> et tous ses logs de détection seront définitivement supprimés. Cette action est irréversible.
+            </AlertDialogDescription>
+          </AlertDialogHeader>
+          <AlertDialogFooter>
+            <AlertDialogCancel className="bg-zinc-900 border-zinc-800 text-white hover:bg-zinc-800">Annuler</AlertDialogCancel>
+            <AlertDialogAction className="bg-red-600 hover:bg-red-700 text-white" onClick={confirmDelete}>Supprimer</AlertDialogAction>
+          </AlertDialogFooter>
+        </AlertDialogContent>
+      </AlertDialog>
+
+      {/* Clear logs dialog */}
+      <AlertDialog open={!!clearTarget} onOpenChange={(o) => !o && setClearTarget(null)}>
+        <AlertDialogContent className="bg-zinc-950 border-zinc-800 text-white">
+          <AlertDialogHeader>
+            <AlertDialogTitle>Vider les logs de la session ?</AlertDialogTitle>
+            <AlertDialogDescription className="text-zinc-400">
+              Tous les logs de détection de la session <span className="font-mono text-white">{clearTarget?.id}</span> seront supprimés. La session elle-même sera conservée.
+            </AlertDialogDescription>
+          </AlertDialogHeader>
+          <AlertDialogFooter>
+            <AlertDialogCancel className="bg-zinc-900 border-zinc-800 text-white hover:bg-zinc-800">Annuler</AlertDialogCancel>
+            <AlertDialogAction className="bg-yellow-600 hover:bg-yellow-700 text-white" onClick={confirmClear}>Vider</AlertDialogAction>
+          </AlertDialogFooter>
+        </AlertDialogContent>
+      </AlertDialog>
     </div>
   );
 }

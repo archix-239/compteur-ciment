@@ -112,7 +112,6 @@ export function Sidebar({ activeRoute = 'dashboard' }: SidebarProps) {
       icon: ShieldCheck,
       items: [
         { id: 'quality-dash', label: 'Qualité Détection', href: '/quality/dashboard' },
-        { id: 'verification', label: 'Vérification Manuelle', href: '/quality/verification' },
         { id: 'anomalies', label: 'Détection d\'Anomalies', href: '/quality/anomalies' },
       ]
     },

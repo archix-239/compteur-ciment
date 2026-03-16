@@ -1,9 +1,11 @@
-import { useCallback, useEffect, useState } from 'react';
+import { useCallback, useEffect, useMemo, useState } from 'react';
 import { AlertTriangle, RefreshCcw, Zap, Clock, CheckCircle2, Filter, Eye, Settings, Loader2 } from 'lucide-react';
 import { Card } from '@/components/ui/card';
 import { Button } from '@/components/ui/button';
 import { Badge } from '@/components/ui/badge';
 import { fetchApi, API_URL } from '@/lib/api';
+
+const PAGE_SIZE = 10;
 
 interface Anomaly {
   id: string;
@@ -18,12 +20,14 @@ interface Anomaly {
 export default function AnomalyDetection() {
   const [anomalies, setAnomalies] = useState<Anomaly[]>([]);
   const [loading, setLoading] = useState(true);
+  const [page, setPage] = useState(1);
 
   const loadAnomalies = useCallback(async () => {
     try {
       setLoading(true);
-      const data = await fetchApi('/api/quality/anomalies?limit=80') as { items: Anomaly[] };
+      const data = await fetchApi('/api/quality/anomalies?limit=200') as { items: Anomaly[] };
       setAnomalies(data.items || []);
+      setPage(1);
     } catch (err) {
       console.error('Error fetching anomalies:', err);
       setAnomalies([]);
@@ -33,6 +37,12 @@ export default function AnomalyDetection() {
   }, []);
 
   useEffect(() => { loadAnomalies(); }, [loadAnomalies]);
+
+  const totalPages = Math.max(1, Math.ceil(anomalies.length / PAGE_SIZE));
+  const pageAnomalies = useMemo(
+    () => anomalies.slice((page - 1) * PAGE_SIZE, page * PAGE_SIZE),
+    [anomalies, page],
+  );
 
   return (
     <div className="p-6 space-y-6">
@@ -58,37 +68,54 @@ export default function AnomalyDetection() {
           ) : anomalies.length === 0 ? (
             <Card className="p-6 bg-zinc-900/50 border-zinc-800 text-zinc-500">Aucune anomalie détectée.</Card>
           ) : (
-            anomalies.map((anomaly) => (
-              <Card key={anomaly.id} className="p-5 bg-zinc-900/50 border-zinc-800 hover:border-zinc-700 transition-all group">
-                <div className="flex gap-6">
-                  <div className="w-32 h-24 rounded-lg overflow-hidden border border-zinc-800 shrink-0 relative">
-                    {anomaly.thumbnail ? (
-                      <img src={anomaly.thumbnail.startsWith('http') ? anomaly.thumbnail : `${API_URL}${anomaly.thumbnail}`} alt="Anomaly" className="w-full h-full object-cover grayscale group-hover:grayscale-0 transition-all" />
-                    ) : (
-                      <div className="w-full h-full bg-zinc-800 flex items-center justify-center text-zinc-500 text-xs">No snapshot</div>
-                    )}
-                    <div className="absolute inset-0 bg-black/40 flex items-center justify-center opacity-0 group-hover:opacity-100 transition-opacity">
-                      <Eye className="w-5 h-5 text-white" />
-                    </div>
-                  </div>
-                  <div className="flex-1 space-y-2">
-                    <div className="flex items-center justify-between">
-                      <div className="flex items-center gap-3">
-                        <span className="text-xs font-mono text-zinc-500">{anomaly.id}</span>
-                        <Badge className={`${anomaly.severity === 'high' ? 'bg-red-500/10 text-red-500 border-red-500/20' : anomaly.severity === 'medium' ? 'bg-yellow-500/10 text-yellow-500 border-yellow-500/20' : 'bg-blue-500/10 text-blue-500 border-blue-500/20'} text-[10px] uppercase font-bold tracking-widest px-2 py-0.5`}>
-                          {anomaly.type}
-                        </Badge>
+            <>
+              {pageAnomalies.map((anomaly) => (
+                <Card key={anomaly.id} className="p-5 bg-zinc-900/50 border-zinc-800 hover:border-zinc-700 transition-all group">
+                  <div className="flex gap-6">
+                    <div className="w-32 h-24 rounded-lg overflow-hidden border border-zinc-800 shrink-0 relative">
+                      {anomaly.thumbnail ? (
+                        <img src={anomaly.thumbnail.startsWith('http') ? anomaly.thumbnail : `${API_URL}${anomaly.thumbnail}`} alt="Anomaly" className="w-full h-full object-cover grayscale group-hover:grayscale-0 transition-all" />
+                      ) : (
+                        <div className="w-full h-full bg-zinc-800 flex items-center justify-center text-zinc-500 text-xs">No snapshot</div>
+                      )}
+                      <div className="absolute inset-0 bg-black/40 flex items-center justify-center opacity-0 group-hover:opacity-100 transition-opacity">
+                        <Eye className="w-5 h-5 text-white" />
                       </div>
-                      <span className="text-[10px] text-zinc-500 font-bold">{anomaly.time}</span>
                     </div>
-                    <p className="text-sm text-zinc-200">{anomaly.description}</p>
-                    <div className="flex items-center justify-end pt-2">
-                      <Button size="sm" variant="outline" className="h-7 text-[10px] border-zinc-800 text-white uppercase font-bold" disabled>Résoudre</Button>
+                    <div className="flex-1 space-y-2">
+                      <div className="flex items-center justify-between">
+                        <div className="flex items-center gap-3">
+                          <span className="text-xs font-mono text-zinc-500">{anomaly.id}</span>
+                          <Badge className={`${anomaly.severity === 'high' ? 'bg-red-500/10 text-red-500 border-red-500/20' : anomaly.severity === 'medium' ? 'bg-yellow-500/10 text-yellow-500 border-yellow-500/20' : 'bg-blue-500/10 text-blue-500 border-blue-500/20'} text-[10px] uppercase font-bold tracking-widest px-2 py-0.5`}>
+                            {anomaly.type}
+                          </Badge>
+                        </div>
+                        <span className="text-[10px] text-zinc-500 font-bold">{anomaly.time}</span>
+                      </div>
+                      <p className="text-sm text-zinc-200">{anomaly.description}</p>
+                      <div className="flex items-center justify-end pt-2">
+                        <Button size="sm" variant="outline" className="h-7 text-[10px] border-zinc-800 text-white uppercase font-bold" disabled>Résoudre</Button>
+                      </div>
                     </div>
                   </div>
+                </Card>
+              ))}
+
+              {/* Pagination */}
+              <div className="flex items-center justify-between pt-2">
+                <p className="text-xs text-zinc-500">
+                  {`Affichage de ${(page - 1) * PAGE_SIZE + 1}–${Math.min(page * PAGE_SIZE, anomalies.length)} sur ${anomalies.length} anomalies.`}
+                </p>
+                <div className="flex gap-2">
+                  <Button variant="outline" size="sm" className="border-zinc-800 text-zinc-500" disabled={page === 1} onClick={() => setPage(p => p - 1)}>
+                    Précédent
+                  </Button>
+                  <Button variant="outline" size="sm" className="border-zinc-800 text-white" disabled={page >= totalPages} onClick={() => setPage(p => p + 1)}>
+                    Suivant
+                  </Button>
                 </div>
-              </Card>
-            ))
+              </div>
+            </>
           )}
         </div>
 

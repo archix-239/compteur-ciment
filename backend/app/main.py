@@ -746,9 +746,9 @@ async def export_data(
         # Data rows (max 2 000 to keep PDF manageable)
         pdf.set_font("Helvetica", "", 6)
         for i, row in enumerate(rows[:2000]):
-            r, g, b = (28, 28, 28) if i % 2 == 0 else (38, 38, 38)
+            r, g, b = (255, 255, 255) if i % 2 == 0 else (242, 242, 242)
             pdf.set_fill_color(r, g, b)
-            pdf.set_text_color(200, 200, 200)
+            pdf.set_text_color(40, 40, 40)
             for val in row:
                 pdf.cell(col_w, 5, _ps(str(val)[:22]), border=1, fill=True)
             pdf.ln()
@@ -985,9 +985,9 @@ def _do_scheduled_export(cfg: dict):
         pdf.ln()
         pdf.set_font("Helvetica", "", 6)
         for i, row in enumerate(rows[:2000]):
-            r, g, b = (28, 28, 28) if i % 2 == 0 else (38, 38, 38)
+            r, g, b = (255, 255, 255) if i % 2 == 0 else (242, 242, 242)
             pdf.set_fill_color(r, g, b)
-            pdf.set_text_color(200, 200, 200)
+            pdf.set_text_color(40, 40, 40)
             for val in row:
                 pdf.cell(col_w, 5, _ps(str(val)[:22]), border=1, fill=True)
             pdf.ln()
@@ -2762,6 +2762,19 @@ async def delete_session(session_id: str, db: Session = Depends(get_db)):
     db.delete(db_session)
     db.commit()
     return {"deleted": 1, "session_id": session_id}
+
+
+@app.delete("/api/sessions/{session_id}/logs")
+async def clear_session_logs(session_id: str, db: Session = Depends(get_db)):
+    """Delete all detection logs for a session without deleting the session itself."""
+    db_session = db.query(models.Session).filter(models.Session.id == session_id).first()
+    if not db_session:
+        raise HTTPException(status_code=404, detail="Session not found")
+    deleted = db.query(models.DetectionLog).filter(models.DetectionLog.session_id == session_id).delete()
+    db_session.total_count = 0
+    db_session.rejected_count = 0
+    db.commit()
+    return {"cleared": deleted, "session_id": session_id}
 
 
 @app.delete("/api/sessions/batch")

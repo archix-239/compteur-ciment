@@ -89,6 +89,20 @@ export default function Timeline() {
     setSelectedHours(hours);
   };
 
+  const handleExport = () => {
+    if (!summary || summary.data.length === 0) return;
+    const header = ['Heure', 'Sacs Comptés', 'Intervalle Moyen (s)', 'Rejetés'];
+    const rows = summary.data.map(b => [b.time, b.count, b.interval, b.rejected]);
+    const csv = [header, ...rows].map(r => r.join(',')).join('\n');
+    const blob = new Blob([csv], { type: 'text/csv;charset=utf-8;' });
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement('a');
+    a.href = url;
+    a.download = `timeline_${selectedHours}h_${new Date().toISOString().slice(0, 10)}.csv`;
+    a.click();
+    URL.revokeObjectURL(url);
+  };
+
   const data = summary?.data ?? [];
 
   // ── Render ──────────────────────────────────────────────────────────────────
@@ -115,7 +129,12 @@ export default function Timeline() {
               : <Filter className="w-4 h-4" />}
             Actualiser
           </Button>
-          <Button variant="outline" className="gap-2 border-zinc-800 text-white">
+          <Button
+            variant="outline"
+            className="gap-2 border-zinc-800 text-white"
+            onClick={handleExport}
+            disabled={!summary || summary.data.length === 0}
+          >
             <Download className="w-4 h-4" /> Exporter le Rapport
           </Button>
         </div>

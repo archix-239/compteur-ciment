@@ -19,7 +19,6 @@ import ModelConfig from "./pages/configuration/ModelConfig";
 import Templates from "./pages/configuration/Templates";
 import VirtualLine from "./pages/configuration/VirtualLine";
 import QualityDashboard from "./pages/quality/QualityDashboard";
-import ManualVerification from "./pages/quality/ManualVerification";
 import AnomalyDetection from "./pages/quality/AnomalyDetection";
 import AlertManagement from "./pages/alerts/AlertManagement";
 import ProductionReports from "./pages/reports/ProductionReports";
@@ -103,11 +102,6 @@ function Router() {
       <Route path="/quality/dashboard">
         <Layout activeRoute="quality-dash">
           <QualityDashboard />
-        </Layout>
-      </Route>
-      <Route path="/quality/verification">
-        <Layout activeRoute="verification">
-          <ManualVerification />
         </Layout>
       </Route>
       <Route path="/quality/anomalies">

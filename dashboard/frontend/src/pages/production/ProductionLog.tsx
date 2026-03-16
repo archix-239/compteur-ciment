@@ -172,7 +172,11 @@ export default function ProductionLog() {
         </div>
 
         <div className="flex items-center justify-between mt-4">
-          <p className="text-xs text-muted-foreground">Affichage de {mapped.length} sur {total} entrées.</p>
+          <p className="text-xs text-muted-foreground">
+            {total === 0
+              ? 'Aucune entrée.'
+              : `Affichage de ${(page - 1) * pageSize + 1}–${(page - 1) * pageSize + mapped.length} sur ${total} entrées.`}
+          </p>
           <div className="flex gap-2">
             <Button variant="outline" size="sm" disabled={page === 1} className="border-zinc-800 text-zinc-500" onClick={() => setPage((p) => Math.max(1, p - 1))}>Précédent</Button>
             <Button variant="outline" size="sm" disabled={page * pageSize >= total} className="border-zinc-800 text-white" onClick={() => setPage((p) => p + 1)}>Suivant</Button>

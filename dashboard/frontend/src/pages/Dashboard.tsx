@@ -5,6 +5,7 @@ import { useProductionData } from '@/hooks/useProductionData';
 import { PageHeader } from '@/components/PageHeader';
 import { Button } from '@/components/ui/button';
 import { RefreshCw, Download } from 'lucide-react';
+import { API_URL } from '@/lib/api';
 import {
   BarChart,
   Bar,
@@ -32,6 +33,10 @@ export default function Dashboard() {
   // Durée estimée du flux = total sacs × intervalle moyen
   const fluxDuration = avgInterval > 0 ? (totalBags * avgInterval).toFixed(1) : '0.0';
 
+  const handleFlashReport = () => {
+    window.open(`${API_URL}/api/reports/export/data?period=today&source=counts&fmt=pdf`, '_blank');
+  };
+
   // Tendance du débit basée sur la comparaison 1re/2e moitié
   const productionTrend = slowdownPercent !== 0
     ? { value: Math.abs(slowdownPercent), direction: slowdownPercent < 0 ? 'up' : 'down' as 'up' | 'down' }
@@ -53,7 +58,7 @@ export default function Dashboard() {
         <Button variant="outline" className="border-zinc-800 text-white gap-2" onClick={refresh}>
           <RefreshCw className="w-4 h-4" /> Actualiser
         </Button>
-        <Button className="bg-orange-600 hover:bg-orange-700 text-white gap-2">
+        <Button className="bg-orange-600 hover:bg-orange-700 text-white gap-2" onClick={handleFlashReport}>
           <Download className="w-4 h-4" /> Rapport Flash
         </Button>
       </PageHeader>
