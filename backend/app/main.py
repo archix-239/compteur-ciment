@@ -215,6 +215,24 @@ async def lifespan(app: FastAPI):
     finally:
         _db_seed.close()
 
+    # ── Seed default roles ──────────────────────────────────────────────────
+    _db_roles = SessionLocal()
+    try:
+        import json as _json_roles
+        for _rd in _DEFAULT_ROLES_SEED:
+            if not _db_roles.query(models.Role).filter(models.Role.name == _rd["name"]).first():
+                _db_roles.add(models.Role(
+                    name=_rd["name"], label=_rd["label"],
+                    description=_rd["description"],
+                    permissions=_json_roles.dumps(_rd["permissions"]),
+                    is_builtin=_rd["is_builtin"],
+                ))
+        _db_roles.commit()
+    except Exception as _re:
+        print(f"WARN: Role seeding failed: {_re}")
+    finally:
+        _db_roles.close()
+
     # ── Start scheduled export background task ────────────────────────────
     global _schedule_task
     _schedule_task = asyncio.create_task(_scheduler_loop())
@@ -1334,6 +1352,78 @@ def _user_to_dict(u: models.User) -> dict:
         "login_count": u.login_count or 0,
     }
 
+# ─── Permissions catalogue ────────────────────────────────────────────────────
+
+PERMISSIONS_CATALOG = [
+    # Dashboard
+    {"id": "dashboard_view",    "group": "Tableau de Bord",  "label": "Voir le tableau de bord"},
+    # Monitoring
+    {"id": "livestream_view",   "group": "Monitoring",       "label": "Flux vidéo en direct"},
+    # Production
+    {"id": "sessions_manage",   "group": "Production",       "label": "Gérer les sessions (démarrer/arrêter)"},
+    {"id": "logs_view",         "group": "Production",       "label": "Voir les logs de production"},
+    {"id": "timeline_view",     "group": "Production",       "label": "Voir la chronologie"},
+    # Configuration
+    {"id": "config_camera",     "group": "Configuration",    "label": "Paramètres caméra"},
+    {"id": "config_model",      "group": "Configuration",    "label": "Modèle IA"},
+    {"id": "config_templates",  "group": "Configuration",    "label": "Templates & Couleurs"},
+    {"id": "config_line",       "group": "Configuration",    "label": "Ligne virtuelle"},
+    # Qualité
+    {"id": "quality_view",      "group": "Qualité",          "label": "Tableau de bord qualité"},
+    {"id": "anomalies_view",    "group": "Qualité",          "label": "Détection d'anomalies"},
+    # Alertes
+    {"id": "alerts_view",       "group": "Alertes",          "label": "Voir les alertes"},
+    {"id": "alerts_manage",     "group": "Alertes",          "label": "Gérer les alertes (règles/seuils)"},
+    # Rapports
+    {"id": "reports_view",      "group": "Rapports",         "label": "Voir les rapports de production"},
+    {"id": "reports_export",    "group": "Rapports",         "label": "Exporter les données (CSV/PDF/XLSX)"},
+    # Analytique
+    {"id": "analytics_view",    "group": "Analytique",       "label": "Performance & OEE"},
+    # Administration
+    {"id": "users_manage",      "group": "Administration",   "label": "Gérer les utilisateurs & rôles"},
+    {"id": "system_settings",   "group": "Administration",   "label": "Paramètres système"},
+    {"id": "devices_manage",    "group": "Administration",   "label": "Gérer les appareils & caméras"},
+    # Maintenance
+    {"id": "maintenance_view",  "group": "Maintenance",      "label": "Santé système"},
+    {"id": "database_manage",   "group": "Maintenance",      "label": "Gestion de la base de données"},
+]
+
+_ALL_PERMS = [p["id"] for p in PERMISSIONS_CATALOG]
+
+_DEFAULT_ROLES_SEED = [
+    {
+        "name": "admin", "label": "Administrateur",
+        "description": "Accès complet au système. Peut configurer le modèle IA, gérer les utilisateurs et modifier tous les paramètres.",
+        "permissions": _ALL_PERMS, "is_builtin": True,
+    },
+    {
+        "name": "operator", "label": "Opérateur",
+        "description": "Peut démarrer/arrêter des sessions de production, surveiller la qualité et créer des alertes manuelles.",
+        "permissions": [
+            "dashboard_view", "livestream_view",
+            "sessions_manage", "logs_view", "timeline_view",
+            "quality_view", "anomalies_view",
+            "alerts_view", "alerts_manage",
+            "reports_view", "reports_export",
+            "analytics_view", "maintenance_view",
+        ],
+        "is_builtin": True,
+    },
+    {
+        "name": "viewer", "label": "Lecteur",
+        "description": "Accès en lecture seule aux tableaux de bord et rapports. Aucune action de modification possible.",
+        "permissions": [
+            "dashboard_view", "livestream_view",
+            "logs_view", "timeline_view",
+            "quality_view", "reports_view", "analytics_view",
+        ],
+        "is_builtin": True,
+    },
+]
+
+
+# ─── Users & Roles ─────────────────────────────────────────────────────────────
+
 @app.get("/api/users/")
 async def get_users(db: Session = Depends(get_db)):
     return [_user_to_dict(u) for u in db.query(models.User).order_by(models.User.id).all()]
@@ -1416,6 +1506,86 @@ async def get_user_activity(limit: int = 50, db: Session = Depends(get_db)):
         }
         for r in rows
     ]
+
+
+# ─── Roles ────────────────────────────────────────────────────────────────────
+
+def _role_to_dict(r: models.Role, db) -> dict:
+    import json as _j
+    perms = _j.loads(r.permissions or "[]")
+    user_count = db.query(models.User).filter(models.User.role == r.name).count()
+    return {
+        "id": r.id, "name": r.name, "label": r.label,
+        "description": r.description, "permissions": perms,
+        "is_builtin": r.is_builtin, "user_count": user_count,
+    }
+
+
+@app.get("/api/roles/permissions")
+async def list_permission_catalog():
+    """Return the full catalogue of available permission slugs, grouped by module."""
+    return PERMISSIONS_CATALOG
+
+
+@app.get("/api/roles/")
+async def list_roles(db: Session = Depends(get_db)):
+    roles = db.query(models.Role).order_by(models.Role.id).all()
+    return [_role_to_dict(r, db) for r in roles]
+
+
+@app.post("/api/roles/", status_code=201)
+async def create_role(payload: schemas.RoleCreate, db: Session = Depends(get_db)):
+    import json as _j
+    # Validate name: slug only
+    import re as _re
+    if not _re.match(r'^[a-z0-9_]+$', payload.name):
+        raise HTTPException(status_code=400, detail="Le nom de rôle doit être en minuscules sans espaces (ex: chef_equipe)")
+    if db.query(models.Role).filter(models.Role.name == payload.name).first():
+        raise HTTPException(status_code=409, detail="Un rôle avec ce nom existe déjà")
+    db_role = models.Role(
+        name=payload.name, label=payload.label,
+        description=payload.description,
+        permissions=_j.dumps(payload.permissions),
+        is_builtin=False,
+    )
+    db.add(db_role)
+    db.commit()
+    db.refresh(db_role)
+    return _role_to_dict(db_role, db)
+
+
+@app.put("/api/roles/{role_id}")
+async def update_role(role_id: int, payload: schemas.RoleUpdate, db: Session = Depends(get_db)):
+    import json as _j
+    db_role = db.query(models.Role).filter(models.Role.id == role_id).first()
+    if not db_role:
+        raise HTTPException(status_code=404, detail="Rôle introuvable")
+    if payload.label is not None:
+        if db_role.is_builtin:
+            raise HTTPException(status_code=400, detail="Le libellé des rôles intégrés ne peut pas être modifié")
+        db_role.label = payload.label
+    if payload.description is not None:
+        db_role.description = payload.description
+    if payload.permissions is not None:
+        db_role.permissions = _j.dumps(payload.permissions)
+    db.commit()
+    db.refresh(db_role)
+    return _role_to_dict(db_role, db)
+
+
+@app.delete("/api/roles/{role_id}")
+async def delete_role(role_id: int, db: Session = Depends(get_db)):
+    db_role = db.query(models.Role).filter(models.Role.id == role_id).first()
+    if not db_role:
+        raise HTTPException(status_code=404, detail="Rôle introuvable")
+    if db_role.is_builtin:
+        raise HTTPException(status_code=400, detail="Les rôles intégrés ne peuvent pas être supprimés")
+    user_count = db.query(models.User).filter(models.User.role == db_role.name).count()
+    if user_count > 0:
+        raise HTTPException(status_code=400, detail=f"Impossible de supprimer un rôle assigné à {user_count} utilisateur(s)")
+    db.delete(db_role)
+    db.commit()
+    return {"deleted": 1, "name": db_role.name}
 
 
 # ─── System Health ────────────────────────────────────────────────────────────
@@ -1826,6 +1996,7 @@ _GENERAL_SETTING_KEYS = [
     "site_name", "site_location", "site_timezone", "site_language",
     "notify_low_production", "notify_weekly_reports",
     "log_level", "log_retention_days",
+    "cache_max_gb", "cache_auto_cleanup",
 ]
 
 _GENERAL_DEFAULTS: dict = {
@@ -1837,6 +2008,21 @@ _GENERAL_DEFAULTS: dict = {
     "notify_weekly_reports": "true",
     "log_level": "info",
     "log_retention_days": "30",
+    "cache_max_gb": "10",
+    "cache_auto_cleanup": "true",
+}
+
+_SECURITY_SETTING_KEYS = [
+    "jwt_expire_minutes", "max_login_attempts",
+    "session_timeout_minutes", "require_2fa_admin", "force_https",
+]
+
+_SECURITY_DEFAULTS: dict = {
+    "jwt_expire_minutes": "30",
+    "max_login_attempts": "5",
+    "session_timeout_minutes": "480",
+    "require_2fa_admin": "false",
+    "force_https": "false",
 }
 
 
@@ -1861,6 +2047,89 @@ async def update_general_settings(payload: dict, db: Session = Depends(get_db)):
             db.add(models.SystemSetting(key=key, value=str(value)))
     db.commit()
     return {"ok": True}
+
+
+@app.get("/api/system/security-settings")
+async def get_security_settings(db: Session = Depends(get_db)):
+    rows = db.query(models.SystemSetting).filter(
+        models.SystemSetting.key.in_(_SECURITY_SETTING_KEYS)
+    ).all()
+    s = {r.key: r.value for r in rows}
+    return {k: s.get(k, _SECURITY_DEFAULTS[k]) for k in _SECURITY_SETTING_KEYS}
+
+
+@app.put("/api/system/security-settings")
+async def update_security_settings(payload: dict, db: Session = Depends(get_db)):
+    for key, value in payload.items():
+        if key not in _SECURITY_SETTING_KEYS:
+            continue
+        row = db.query(models.SystemSetting).filter(models.SystemSetting.key == key).first()
+        if row:
+            row.value = str(value)
+        else:
+            db.add(models.SystemSetting(key=key, value=str(value)))
+    db.commit()
+    return {"ok": True}
+
+
+@app.get("/api/system/export-config")
+async def export_config(db: Session = Depends(get_db)):
+    """Export all system settings + cameras as a downloadable JSON file."""
+    import json as _j
+    rows = db.query(models.SystemSetting).all()
+    cameras = db.query(models.Camera).all()
+    data = {
+        "version": "1.0",
+        "exported_at": datetime.utcnow().isoformat(),
+        "settings": {r.key: r.value for r in rows},
+        "cameras": [
+            {
+                "name": c.name, "source_type": c.source_type,
+                "url": c.url, "resolution": c.resolution,
+                "fps": c.fps, "notes": c.notes,
+            }
+            for c in cameras
+        ],
+    }
+    content = _j.dumps(data, indent=2, ensure_ascii=False)
+    fname = f"config_backup_{datetime.utcnow().strftime('%Y%m%d_%H%M%S')}.json"
+    return Response(
+        content=content,
+        media_type="application/json",
+        headers={"Content-Disposition": f"attachment; filename={fname}"},
+    )
+
+
+@app.post("/api/system/import-config")
+async def import_config(payload: dict, db: Session = Depends(get_db)):
+    """Restore system settings from an exported config JSON."""
+    settings = payload.get("settings", {})
+    if not isinstance(settings, dict):
+        raise HTTPException(status_code=400, detail="Format invalide : 'settings' doit être un objet JSON")
+    restored = 0
+    for key, value in settings.items():
+        row = db.query(models.SystemSetting).filter(models.SystemSetting.key == key).first()
+        if row:
+            row.value = str(value)
+        else:
+            db.add(models.SystemSetting(key=key, value=str(value)))
+        restored += 1
+    db.commit()
+    return {"ok": True, "restored_keys": restored}
+
+
+@app.get("/api/system/db-backup")
+async def download_db_backup():
+    """Download the SQLite database file as a binary attachment."""
+    import os as _os
+    from fastapi.responses import FileResponse as _FR
+    db_path = _os.path.abspath(
+        _os.path.join(_os.path.dirname(__file__), "..", "production.db")
+    )
+    if not _os.path.exists(db_path):
+        raise HTTPException(status_code=404, detail="Fichier de base de données introuvable")
+    fname = f"production_backup_{datetime.utcnow().strftime('%Y%m%d_%H%M%S')}.db"
+    return _FR(path=db_path, media_type="application/octet-stream", filename=fname)
 
 
 # ─── Analytics / OEE ─────────────────────────────────────────────────────────

@@ -82,6 +82,17 @@ class SystemSetting(Base):
     key = Column(String, primary_key=True, index=True)
     value = Column(String)
 
+class Role(Base):
+    __tablename__ = "roles"
+    id = Column(Integer, primary_key=True, index=True)
+    name = Column(String, unique=True, index=True)       # admin, operator, viewer, custom…
+    label = Column(String)                               # "Administrateur"
+    description = Column(String, nullable=True)
+    permissions = Column(String, default="[]")           # JSON array of permission slugs
+    is_builtin = Column(Boolean, default=False)          # built-in roles cannot be deleted
+    created_at = Column(DateTime, default=datetime.datetime.utcnow)
+
+
 class Camera(Base):
     __tablename__ = "cameras"
     id = Column(Integer, primary_key=True, index=True)

@@ -241,6 +241,29 @@ class CameraDeviceUpdate(BaseModel):
     fps: Optional[int] = None
     notes: Optional[str] = None
 
+class RoleOut(BaseModel):
+    id: int
+    name: str
+    label: str
+    description: Optional[str] = None
+    permissions: List[str]
+    is_builtin: bool
+    user_count: int = 0
+    class Config:
+        from_attributes = True
+
+class RoleCreate(BaseModel):
+    name: str
+    label: str
+    description: Optional[str] = None
+    permissions: List[str] = []
+
+class RoleUpdate(BaseModel):
+    label: Optional[str] = None
+    description: Optional[str] = None
+    permissions: Optional[List[str]] = None
+
+
 class Token(BaseModel):
     access_token: str
     token_type: str
