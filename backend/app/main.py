@@ -12,6 +12,7 @@ import asyncio
 import queue
 import signal
 from typing import List
+from pydantic import BaseModel
 from . import models, schemas, database, auth, vision_engine
 from .database import engine, SessionLocal, get_db
 
@@ -232,6 +233,30 @@ async def lifespan(app: FastAPI):
         print(f"WARN: Role seeding failed: {_re}")
     finally:
         _db_roles.close()
+
+    # ── Seed default admin user (create if absent, never overwrite existing) ──
+    _db_admin = SessionLocal()
+    try:
+        _existing_admin = _db_admin.query(models.User).filter(models.User.username == "admin").first()
+        if not _existing_admin:
+            _db_admin.add(models.User(
+                username="admin",
+                hashed_password=auth.get_password_hash("admin1234"),
+                full_name="Administrateur",
+                role="admin",
+                is_active=True,
+            ))
+            _db_admin.commit()
+            print("INFO: Compte admin par défaut créé  →  admin / admin1234")
+        else:
+            # Ensure the admin role is correct (never downgrade an existing account)
+            if _existing_admin.role != "admin":
+                _existing_admin.role = "admin"
+                _db_admin.commit()
+    except Exception as _ae:
+        print(f"WARN: Admin seed failed: {_ae}")
+    finally:
+        _db_admin.close()
 
     # ── Start scheduled export background task ────────────────────────────
     global _schedule_task
@@ -2132,6 +2157,188 @@ async def download_db_backup():
     return _FR(path=db_path, media_type="application/octet-stream", filename=fname)
 
 
+# ─── Profile self-service ──────────────────────────────────────────────────────
+class _SelfPasswordChange(BaseModel):
+    current_password: str
+    new_password: str
+
+@app.patch("/api/users/me/password")
+async def change_own_password(
+    payload: _SelfPasswordChange,
+    current_user: models.User = Depends(auth.get_current_user),
+    db: Session = Depends(get_db),
+):
+    if not auth.verify_password(payload.current_password, current_user.hashed_password):
+        raise HTTPException(status_code=400, detail="Mot de passe actuel incorrect")
+    if len(payload.new_password) < 6:
+        raise HTTPException(status_code=400, detail="Le nouveau mot de passe doit contenir au moins 6 caractères")
+    current_user.hashed_password = auth.get_password_hash(payload.new_password)
+    db.add(models.UserActivity(user_id=current_user.id, username=current_user.username, action="password_changed"))
+    db.commit()
+    return {"ok": True}
+
+
+# ─── Audit Trail ──────────────────────────────────────────────────────────────
+@app.get("/api/audit/")
+async def get_audit_trail(
+    page: int = 1,
+    page_size: int = 20,
+    action: str | None = None,
+    username: str | None = None,
+    db: Session = Depends(get_db),
+):
+    page = max(1, page)
+    page_size = min(max(page_size, 1), 100)
+    q = db.query(models.UserActivity).order_by(models.UserActivity.timestamp.desc())
+    if action:
+        q = q.filter(models.UserActivity.action == action)
+    if username:
+        q = q.filter(models.UserActivity.username.ilike(f"%{username}%"))
+    total = q.count()
+    rows = q.offset((page - 1) * page_size).limit(page_size).all()
+    return {
+        "total": total,
+        "page": page,
+        "page_size": page_size,
+        "items": [
+            {
+                "id": r.id,
+                "username": r.username,
+                "timestamp": r.timestamp.isoformat(),
+                "action": r.action,
+                "ip_address": r.ip_address,
+                "user_agent": r.user_agent,
+            }
+            for r in rows
+        ],
+    }
+
+
+# ─── API Keys ─────────────────────────────────────────────────────────────────
+import secrets as _secrets
+import hashlib as _hashlib
+
+def _hash_key(raw_key: str) -> str:
+    return _hashlib.sha256(raw_key.encode()).hexdigest()
+
+class _ApiKeyCreate(BaseModel):
+    name: str
+    scope: str = "read"
+
+@app.get("/api/apikeys/")
+async def list_api_keys(
+    current_user: models.User = Depends(auth.get_current_user),
+    db: Session = Depends(get_db),
+):
+    keys = db.query(models.ApiKey).filter(models.ApiKey.is_active == True).order_by(models.ApiKey.created_at.desc()).all()
+    return [
+        {
+            "id": k.id,
+            "name": k.name,
+            "key_prefix": k.key_prefix,
+            "scope": k.scope,
+            "user_id": k.user_id,
+            "created_at": k.created_at.isoformat() if k.created_at else None,
+            "last_used_at": k.last_used_at.isoformat() if k.last_used_at else None,
+        }
+        for k in keys
+    ]
+
+@app.post("/api/apikeys/", status_code=201)
+async def create_api_key(
+    payload: _ApiKeyCreate,
+    current_user: models.User = Depends(auth.get_current_user),
+    db: Session = Depends(get_db),
+):
+    raw_key = "cmt_" + _secrets.token_hex(24)
+    key_prefix = raw_key[:12] + "..."
+    new_key = models.ApiKey(
+        name=payload.name,
+        key_prefix=key_prefix,
+        key_hash=_hash_key(raw_key),
+        scope=payload.scope,
+        user_id=current_user.id,
+        is_active=True,
+    )
+    db.add(new_key)
+    db.commit()
+    db.refresh(new_key)
+    return {
+        "id": new_key.id,
+        "name": new_key.name,
+        "key_prefix": new_key.key_prefix,
+        "scope": new_key.scope,
+        "raw_key": raw_key,  # affiché une seule fois
+        "created_at": new_key.created_at.isoformat() if new_key.created_at else None,
+    }
+
+@app.delete("/api/apikeys/{key_id}")
+async def revoke_api_key(
+    key_id: int,
+    current_user: models.User = Depends(auth.get_current_user),
+    db: Session = Depends(get_db),
+):
+    key = db.query(models.ApiKey).filter(models.ApiKey.id == key_id).first()
+    if not key:
+        raise HTTPException(status_code=404, detail="Clé introuvable")
+    key.is_active = False
+    db.commit()
+    return {"ok": True}
+
+
+# ─── Integration Settings ─────────────────────────────────────────────────────
+_INTEGRATION_KEYS = [
+    "webhook_enabled", "webhook_url", "webhook_secret",
+    "smtp_host", "smtp_port", "smtp_user", "smtp_password", "smtp_from",
+    "slack_webhook_url", "slack_enabled",
+    "teams_webhook_url", "teams_enabled",
+]
+_INTEGRATION_DEFAULTS: dict = {
+    "webhook_enabled": "false", "webhook_url": "", "webhook_secret": "",
+    "smtp_host": "", "smtp_port": "587", "smtp_user": "", "smtp_password": "", "smtp_from": "",
+    "slack_webhook_url": "", "slack_enabled": "false",
+    "teams_webhook_url": "", "teams_enabled": "false",
+}
+
+@app.get("/api/system/integration-settings")
+async def get_integration_settings(db: Session = Depends(get_db)):
+    rows = db.query(models.SystemSetting).filter(models.SystemSetting.key.in_(_INTEGRATION_KEYS)).all()
+    s = {r.key: r.value for r in rows}
+    return {k: s.get(k, _INTEGRATION_DEFAULTS[k]) for k in _INTEGRATION_KEYS}
+
+@app.put("/api/system/integration-settings")
+async def update_integration_settings(payload: dict, db: Session = Depends(get_db)):
+    for key, value in payload.items():
+        if key not in _INTEGRATION_KEYS:
+            continue
+        row = db.query(models.SystemSetting).filter(models.SystemSetting.key == key).first()
+        if row:
+            row.value = str(value)
+        else:
+            db.add(models.SystemSetting(key=key, value=str(value)))
+    db.commit()
+    return {"ok": True}
+
+@app.post("/api/system/test-webhook")
+async def test_webhook(db: Session = Depends(get_db)):
+    import httpx as _httpx
+    rows = db.query(models.SystemSetting).filter(models.SystemSetting.key.in_(["webhook_url", "webhook_secret"])).all()
+    s = {r.key: r.value for r in rows}
+    url = s.get("webhook_url", "")
+    secret = s.get("webhook_secret", "")
+    if not url:
+        raise HTTPException(status_code=400, detail="URL du webhook non configurée")
+    try:
+        headers = {"Content-Type": "application/json"}
+        if secret:
+            headers["X-Webhook-Secret"] = secret
+        async with _httpx.AsyncClient(timeout=5.0) as client:
+            r = await client.post(url, json={"event": "test", "source": "CimentMonitorPro"}, headers=headers)
+        return {"ok": True, "status_code": r.status_code}
+    except Exception as e:
+        raise HTTPException(status_code=502, detail=f"Échec: {str(e)}")
+
+
 # ─── Analytics / OEE ─────────────────────────────────────────────────────────
 @app.get("/api/analytics/oee")
 async def get_oee_analytics(hours: int = 24, db: Session = Depends(get_db)):
@@ -2947,6 +3154,24 @@ async def login_for_access_token(request: Request, form_data: OAuth2PasswordRequ
 @app.get("/users/me", response_model=schemas.User)
 async def read_users_me(current_user: models.User = Depends(auth.get_current_user)):
     return current_user
+
+
+@app.get("/api/users/me")
+async def read_current_user_api(
+    current_user: models.User = Depends(auth.get_current_user),
+    db: Session = Depends(get_db),
+):
+    """Return current user profile + their role's permissions."""
+    role = db.query(models.Role).filter(models.Role.name == current_user.role).first()
+    permissions = json.loads(role.permissions) if role else []
+    return {
+        "id": current_user.id,
+        "username": current_user.username,
+        "full_name": current_user.full_name or current_user.username,
+        "role": current_user.role,
+        "is_active": current_user.is_active,
+        "permissions": permissions,
+    }
 
 
 # ─── Sessions ─────────────────────────────────────────────────────────────────

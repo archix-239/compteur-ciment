@@ -93,6 +93,19 @@ class Role(Base):
     created_at = Column(DateTime, default=datetime.datetime.utcnow)
 
 
+class ApiKey(Base):
+    __tablename__ = "api_keys"
+    id = Column(Integer, primary_key=True, index=True)
+    name = Column(String)
+    key_prefix = Column(String)   # premiers 8 caractères affichés
+    key_hash = Column(String)     # hash bcrypt de la clé complète
+    scope = Column(String, default="read")  # read | write | admin
+    user_id = Column(Integer, ForeignKey("users.id", ondelete="SET NULL"), nullable=True)
+    created_at = Column(DateTime, default=datetime.datetime.utcnow)
+    last_used_at = Column(DateTime, nullable=True)
+    is_active = Column(Boolean, default=True)
+
+
 class Camera(Base):
     __tablename__ = "cameras"
     id = Column(Integer, primary_key=True, index=True)
