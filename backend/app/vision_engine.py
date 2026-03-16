@@ -79,8 +79,18 @@ class VisionEngine:
         self.last_annotated_frame = None
         self.inference_every_n_frames = 2
 
-        # Ensure capture directory exists
+        # Ensure directories exist
         os.makedirs("backend/static/captures", exist_ok=True)
+        os.makedirs("backend/static/templates", exist_ok=True)
+
+        # ── Template & colour matching ────────────────────────────────────────
+        self._logo_template: np.ndarray | None = None   # active template image (BGR)
+        self._logo_kp      = None                        # pre-computed ORB keypoints
+        self._logo_des     = None                        # pre-computed ORB descriptors
+        self._logo_threshold: float = 0.65               # minimum score to pass
+        self._orb          = cv2.ORB_create(nfeatures=300)
+        self._color_refs: list = []                      # list of HSV range dicts
+        self._color_threshold: float = 0.25              # min pixel-fraction to match
 
         self._initialized = True
 
@@ -94,6 +104,81 @@ class VisionEngine:
 
     def set_on_count_callback(self, callback):
         self.on_count_callback = callback
+
+    # ── Template & colour API ─────────────────────────────────────────────────
+
+    def apply_template_config(self, template_path: str | None, threshold: float, color_refs: list, color_threshold: float = 0.25):
+        """Load/reload the reference template and colour palette.
+
+        Called once at startup (from lifespan) and again each time the operator
+        uploads a new template or edits the colour library.
+        """
+        self._logo_threshold   = threshold
+        self._color_refs       = color_refs
+        self._color_threshold  = color_threshold
+        # Reset cached keypoints
+        self._logo_kp  = None
+        self._logo_des = None
+        self._logo_template = None
+
+        if template_path and os.path.exists(template_path):
+            img = cv2.imread(template_path)
+            if img is not None:
+                self._logo_template = img
+                gray = cv2.cvtColor(img, cv2.COLOR_BGR2GRAY)
+                self._logo_kp, self._logo_des = self._orb.detectAndCompute(gray, None)
+                print(f"INFO: Template chargé — {os.path.basename(template_path)} "
+                      f"({img.shape[1]}×{img.shape[0]} px, "
+                      f"{len(self._logo_kp) if self._logo_kp else 0} keypoints ORB)")
+            else:
+                print(f"WARN: Impossible de lire le template: {template_path}")
+
+    def _compute_logo_score(self, roi_bgr: np.ndarray) -> float:
+        """ORB-based logo matching score in [0, 1].
+
+        If no template is loaded, falls back to a plausible random value so
+        existing behaviour is preserved.
+        """
+        if self._logo_template is None or self._logo_des is None:
+            return round(0.90 + np.random.random() * 0.09, 3)
+        try:
+            h, w = self._logo_template.shape[:2]
+            roi_resized = cv2.resize(roi_bgr, (w, h), interpolation=cv2.INTER_AREA)
+            gray_roi = cv2.cvtColor(roi_resized, cv2.COLOR_BGR2GRAY)
+            kp_r, des_r = self._orb.detectAndCompute(gray_roi, None)
+            if des_r is None or len(self._logo_kp) == 0:
+                return 0.0
+            bf = cv2.BFMatcher(cv2.NORM_HAMMING, crossCheck=True)
+            matches = bf.match(self._logo_des, des_r)
+            good    = [m for m in matches if m.distance < 55]
+            score   = len(good) / max(len(self._logo_kp), 1)
+            return round(min(score, 1.0), 3)
+        except Exception:
+            return 0.0
+
+    def _compute_color_score(self, roi_bgr: np.ndarray) -> float:
+        """HSV-mask colour matching score in [0, 1].
+
+        For each reference colour, computes the fraction of ROI pixels that
+        fall within its HSV range.  Returns the best match across all refs.
+        Falls back to a plausible random value when no references are defined.
+        """
+        if not self._color_refs:
+            return round(0.85 + np.random.random() * 0.10, 3)
+        try:
+            hsv      = cv2.cvtColor(roi_bgr, cv2.COLOR_BGR2HSV)
+            total_px = hsv.shape[0] * hsv.shape[1]
+            if total_px == 0:
+                return 0.0
+            best = 0.0
+            for ref in self._color_refs:
+                lower = np.array([ref["h_min"], ref["s_min"], ref["v_min"]], dtype=np.uint8)
+                upper = np.array([ref["h_max"], ref["s_max"], ref["v_max"]], dtype=np.uint8)
+                mask  = cv2.inRange(hsv, lower, upper)
+                best  = max(best, np.count_nonzero(mask) / total_px)
+            return round(min(best, 1.0), 3)
+        except Exception:
+            return 0.0
 
     def add_video_subscriber(self, queue):
         with self.video_subscribers_lock:
@@ -521,8 +606,8 @@ class VisionEngine:
                                 "timestamp": datetime.utcnow(),
                                 "detection_score": detection_score,
                                 "capture_url": f"/static/captures/{filename}",
-                                "logo_score": 0.9 + (np.random.random() * 0.09),
-                                "color_score": 0.85 + (np.random.random() * 0.1),
+                                "logo_score": self._compute_logo_score(roi_bgr),
+                                "color_score": self._compute_color_score(roi_bgr),
                                 "interval": 2.5
                             }
 

@@ -171,6 +171,27 @@ async def lifespan(app: FastAPI):
         except Exception:
             pass  # Column already exists
 
+    # ── Load template & colour config and apply to vision engine ─────────────
+    _db_tmpl = SessionLocal()
+    try:
+        import json as _json_tmpl
+        _ts = {s.key: s.value for s in _db_tmpl.query(models.SystemSetting).filter(
+            models.SystemSetting.key.in_([
+                "template_active_file", "template_threshold",
+                "template_colors", "template_color_threshold",
+            ])
+        ).all()}
+        _tmpl_file = _ts.get("template_active_file", "")
+        _tmpl_path = f"backend/static/templates/{_tmpl_file}" if _tmpl_file else None
+        _threshold  = float(_ts.get("template_threshold", "0.65"))
+        _color_thr  = float(_ts.get("template_color_threshold", "0.25"))
+        _color_refs = _json_tmpl.loads(_ts.get("template_colors", "[]"))
+        v_engine.get_vision_engine().apply_template_config(_tmpl_path, _threshold, _color_refs, _color_thr)
+    except Exception as _e:
+        print(f"WARN: Template config load failed: {_e}")
+    finally:
+        _db_tmpl.close()
+
     # ── Seed cameras table from legacy SystemSettings (backward compat) ──────
     _db_seed = SessionLocal()
     try:
@@ -3342,6 +3363,233 @@ async def run_ia_benchmark():
         }
     except Exception as e:
         raise HTTPException(status_code=500, detail=f"Benchmark échoué : {e}")
+
+
+# ─── Template & Colour Configuration ─────────────────────────────────────────
+import json as _json_tmpl_ep
+import colorsys as _colorsys
+import os as _os_tmpl
+
+_TEMPLATES_DIR = "backend/static/templates"
+_os_tmpl.makedirs(_TEMPLATES_DIR, exist_ok=True)
+
+
+def _hex_to_hsv_range(hex_color: str, tolerance: int) -> dict:
+    """Convert a hex colour + tolerance into an OpenCV HSV range dict."""
+    hex_color = hex_color.lstrip("#")
+    r, g, b = (int(hex_color[i:i+2], 16) / 255.0 for i in (0, 2, 4))
+    h, s, v = _colorsys.rgb_to_hsv(r, g, b)
+    h_cv = h * 180.0          # OpenCV H: 0-180
+    s_cv = s * 255.0           # OpenCV S: 0-255
+    v_cv = v * 255.0           # OpenCV V: 0-255
+    h_tol  = tolerance * 0.9    # H is compact: small tolerance
+    sv_tol = tolerance * 2.0    # S and V have larger tolerance
+    return {
+        "h_min": max(0,   int(h_cv - h_tol)),
+        "h_max": min(180, int(h_cv + h_tol)),
+        "s_min": max(0,   int(s_cv - sv_tol)),
+        "s_max": min(255, int(s_cv + sv_tol)),
+        "v_min": max(0,   int(v_cv - sv_tol)),
+        "v_max": min(255, int(v_cv + sv_tol)),
+    }
+
+
+def _get_setting(db, key: str, default: str = "") -> str:
+    s = db.query(models.SystemSetting).filter(models.SystemSetting.key == key).first()
+    return s.value if s else default
+
+
+def _set_setting(db, key: str, value: str):
+    s = db.query(models.SystemSetting).filter(models.SystemSetting.key == key).first()
+    if s:
+        s.value = value
+    else:
+        db.add(models.SystemSetting(key=key, value=value))
+
+
+@app.get("/api/config/template")
+async def get_template_config(db: Session = Depends(get_db)):
+    active_file = _get_setting(db, "template_active_file")
+    threshold   = float(_get_setting(db, "template_threshold", "0.65"))
+    color_thr   = float(_get_setting(db, "template_color_threshold", "0.25"))
+    color_refs  = _json_tmpl_ep.loads(_get_setting(db, "template_colors", "[]"))
+
+    # Build history from files on disk
+    history = []
+    try:
+        for fname in sorted(_os_tmpl.listdir(_TEMPLATES_DIR), reverse=True):
+            if fname.lower().endswith((".jpg", ".jpeg", ".png")):
+                fpath = _os_tmpl.join(_TEMPLATES_DIR, fname)
+                img = __import__("cv2").imread(fpath)
+                w, h = (img.shape[1], img.shape[0]) if img is not None else (0, 0)
+                history.append({
+                    "filename": fname,
+                    "url": f"/static/templates/{fname}",
+                    "size_kb": round(_os_tmpl.path.getsize(fpath) / 1024, 1),
+                    "width": w,
+                    "height": h,
+                    "is_active": fname == active_file,
+                })
+    except Exception:
+        pass
+
+    active_meta = next((t for t in history if t["is_active"]), None)
+    return {
+        "active_file": active_file,
+        "active_url": f"/static/templates/{active_file}" if active_file else None,
+        "active_width":  active_meta["width"]  if active_meta else 0,
+        "active_height": active_meta["height"] if active_meta else 0,
+        "threshold": threshold,
+        "color_threshold": color_thr,
+        "color_refs": color_refs,
+        "history": history,
+    }
+
+
+@app.post("/api/config/template/upload")
+async def upload_template(file: UploadFile = File(...), db: Session = Depends(get_db)):
+    if not file.content_type.startswith("image/"):
+        raise HTTPException(status_code=400, detail="Seules les images sont acceptées (JPEG, PNG).")
+    import datetime as _dt_tmpl
+    ext      = _os_tmpl.path.splitext(file.filename or "img.jpg")[1].lower() or ".jpg"
+    fname    = f"template_{_dt_tmpl.datetime.utcnow().strftime('%Y%m%d_%H%M%S')}{ext}"
+    fpath    = _os_tmpl.join(_TEMPLATES_DIR, fname)
+    contents = await file.read()
+    with open(fpath, "wb") as f:
+        f.write(contents)
+
+    # Read back to verify and get dimensions
+    import cv2 as _cv2_t
+    img = _cv2_t.imread(fpath)
+    if img is None:
+        _os_tmpl.remove(fpath)
+        raise HTTPException(status_code=400, detail="Fichier image invalide ou corrompu.")
+
+    # Set as active
+    _set_setting(db, "template_active_file", fname)
+    threshold  = float(_get_setting(db, "template_threshold", "0.65"))
+    color_thr  = float(_get_setting(db, "template_color_threshold", "0.25"))
+    color_refs = _json_tmpl_ep.loads(_get_setting(db, "template_colors", "[]"))
+    db.commit()
+
+    # Apply to running engine
+    vision_engine.get_vision_engine().apply_template_config(fpath, threshold, color_refs, color_thr)
+
+    return {
+        "filename": fname,
+        "url": f"/static/templates/{fname}",
+        "width": img.shape[1],
+        "height": img.shape[0],
+    }
+
+
+@app.post("/api/config/template/activate/{filename}")
+async def activate_template(filename: str, db: Session = Depends(get_db)):
+    fpath = _os_tmpl.join(_TEMPLATES_DIR, filename)
+    if not _os_tmpl.exists(fpath):
+        raise HTTPException(status_code=404, detail="Template introuvable.")
+    _set_setting(db, "template_active_file", filename)
+    threshold  = float(_get_setting(db, "template_threshold", "0.65"))
+    color_thr  = float(_get_setting(db, "template_color_threshold", "0.25"))
+    color_refs = _json_tmpl_ep.loads(_get_setting(db, "template_colors", "[]"))
+    db.commit()
+    vision_engine.get_vision_engine().apply_template_config(fpath, threshold, color_refs, color_thr)
+    return {"ok": True, "active_file": filename}
+
+
+@app.delete("/api/config/template/history/{filename}")
+async def delete_template(filename: str, db: Session = Depends(get_db)):
+    fpath = _os_tmpl.join(_TEMPLATES_DIR, filename)
+    if not _os_tmpl.exists(fpath):
+        raise HTTPException(status_code=404, detail="Template introuvable.")
+    active = _get_setting(db, "template_active_file")
+    if filename == active:
+        raise HTTPException(status_code=400, detail="Impossible de supprimer le template actif. Activez un autre d'abord.")
+    _os_tmpl.remove(fpath)
+    return {"ok": True}
+
+
+@app.put("/api/config/template/settings")
+async def update_template_settings(body: dict, db: Session = Depends(get_db)):
+    """Update threshold and/or colour score threshold."""
+    if "threshold" in body:
+        _set_setting(db, "template_threshold", str(float(body["threshold"])))
+    if "color_threshold" in body:
+        _set_setting(db, "template_color_threshold", str(float(body["color_threshold"])))
+    db.commit()
+    # Re-apply to engine with current template
+    active_file = _get_setting(db, "template_active_file")
+    fpath       = _os_tmpl.join(_TEMPLATES_DIR, active_file) if active_file else None
+    threshold   = float(_get_setting(db, "template_threshold", "0.65"))
+    color_thr   = float(_get_setting(db, "template_color_threshold", "0.25"))
+    color_refs  = _json_tmpl_ep.loads(_get_setting(db, "template_colors", "[]"))
+    vision_engine.get_vision_engine().apply_template_config(fpath, threshold, color_refs, color_thr)
+    return {"ok": True, "threshold": threshold, "color_threshold": color_thr}
+
+
+@app.get("/api/config/colors")
+async def get_color_refs(db: Session = Depends(get_db)):
+    refs = _json_tmpl_ep.loads(_get_setting(db, "template_colors", "[]"))
+    return refs
+
+
+@app.post("/api/config/colors")
+async def add_color_ref(body: dict, db: Session = Depends(get_db)):
+    """Body: {name, hex, tolerance (0-100)}"""
+    name      = body.get("name", "Couleur").strip()
+    hex_color = body.get("hex", "#808080")
+    tolerance = int(body.get("tolerance", 25))
+    hsv_range = _hex_to_hsv_range(hex_color, tolerance)
+    refs = _json_tmpl_ep.loads(_get_setting(db, "template_colors", "[]"))
+    refs.append({"name": name, "hex": hex_color, "tolerance": tolerance, **hsv_range})
+    _set_setting(db, "template_colors", _json_tmpl_ep.dumps(refs))
+    db.commit()
+    # Re-apply
+    active_file = _get_setting(db, "template_active_file")
+    fpath       = _os_tmpl.join(_TEMPLATES_DIR, active_file) if active_file else None
+    threshold   = float(_get_setting(db, "template_threshold", "0.65"))
+    color_thr   = float(_get_setting(db, "template_color_threshold", "0.25"))
+    vision_engine.get_vision_engine().apply_template_config(fpath, threshold, refs, color_thr)
+    return refs
+
+
+@app.put("/api/config/colors/{idx}")
+async def update_color_ref(idx: int, body: dict, db: Session = Depends(get_db)):
+    refs = _json_tmpl_ep.loads(_get_setting(db, "template_colors", "[]"))
+    if idx < 0 or idx >= len(refs):
+        raise HTTPException(status_code=404, detail="Référence couleur introuvable.")
+    if "name"      in body: refs[idx]["name"]      = body["name"]
+    if "tolerance" in body:
+        tol = int(body["tolerance"])
+        refs[idx]["tolerance"] = tol
+        refs[idx].update(_hex_to_hsv_range(refs[idx]["hex"], tol))
+    if "hex" in body:
+        refs[idx]["hex"] = body["hex"]
+        refs[idx].update(_hex_to_hsv_range(body["hex"], refs[idx].get("tolerance", 25)))
+    _set_setting(db, "template_colors", _json_tmpl_ep.dumps(refs))
+    db.commit()
+    active_file = _get_setting(db, "template_active_file")
+    fpath       = _os_tmpl.join(_TEMPLATES_DIR, active_file) if active_file else None
+    threshold   = float(_get_setting(db, "template_threshold", "0.65"))
+    color_thr   = float(_get_setting(db, "template_color_threshold", "0.25"))
+    vision_engine.get_vision_engine().apply_template_config(fpath, threshold, refs, color_thr)
+    return refs
+
+
+@app.delete("/api/config/colors/{idx}")
+async def delete_color_ref(idx: int, db: Session = Depends(get_db)):
+    refs = _json_tmpl_ep.loads(_get_setting(db, "template_colors", "[]"))
+    if idx < 0 or idx >= len(refs):
+        raise HTTPException(status_code=404, detail="Référence couleur introuvable.")
+    refs.pop(idx)
+    _set_setting(db, "template_colors", _json_tmpl_ep.dumps(refs))
+    db.commit()
+    active_file = _get_setting(db, "template_active_file")
+    fpath       = _os_tmpl.join(_TEMPLATES_DIR, active_file) if active_file else None
+    threshold   = float(_get_setting(db, "template_threshold", "0.65"))
+    color_thr   = float(_get_setting(db, "template_color_threshold", "0.25"))
+    vision_engine.get_vision_engine().apply_template_config(fpath, threshold, refs, color_thr)
+    return refs
 
 
 # ─── Device Management ────────────────────────────────────────────────────────

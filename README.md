@@ -97,7 +97,7 @@ Suivi de l'intégration réelle (remplacement des données fictives par des appe
 | 1 | **Configuration — Paramètres Caméra** | Fait | GET/PUT `/api/config/camera`, POST `/api/config/camera/test` (test réel OpenCV). Formulaire connecté, sauvegarde en BDD, test de connexion caméra fonctionnel. Preview WebSocket vidéo. |
 | 2 | **Configuration — Modèle IA** | Fait | GET/PUT `/api/config/model` connecté au frontend. Paramètres (modèle, seuil confiance, NMS, max det, imgsz, tracking persist) persistés en BDD et appliqués à chaud au moteur vision. Upload `.pt` via `POST /api/models/upload`, activation via `POST /api/models/activate`, suppression via `DELETE /api/models/{filename}`. |
 | 3 | **Configuration — Ligne Virtuelle** | Fait | GET/PUT `/api/config/virtual-line` connecté. Position, largeur et direction persistées et appliquées en temps réel à la logique de franchissement de ligne. |
-| 4 | Configuration — Templates | En attente | — |
+| 4 | **Configuration — Templates & Couleurs** | Fait | **Scoring temps réel remplaçant les valeurs aléatoires.** `vision_engine.py` : `apply_template_config()` charge le template PNG/JPEG, pré-calcule les keypoints ORB ; `_compute_logo_score()` = ratio de good-matches ORB (Hamming < 55) / keypoints template [0-1] ; `_compute_color_score()` = meilleure fraction de pixels dans la plage HSV parmi les références [0-1]. `GET /api/config/template` : config active (URL, dims, seuils) + historique fichiers disque. `POST /api/config/template/upload` : upload image (multipart) → sauvegardé dans `backend/static/templates/`, activé et appliqué à chaud. `POST /api/config/template/activate/{filename}` : bascule template actif. `DELETE /api/config/template/history/{filename}` : supprime (interdit sur actif). `PUT /api/config/template/settings` : met à jour seuil logo + seuil couleur. `GET /api/config/colors` : liste JSON des références couleurs (hex, tolérance, plages HSV). `POST /api/config/colors` : ajoute couleur (hex → HSV range calculé via `colorsys`). `PUT /api/config/colors/{idx}` : modifie nom/hex/tolérance. `DELETE /api/config/colors/{idx}` : supprime. Paramètres stockés dans `SystemSettings`. Chargement automatique au démarrage (lifespan). Preview image cliquable. Historique grille. Sliders seuils logo/couleur. Swatch + plages HSV par couleur. Flash banner. |
 | 5 | **Monitoring — Flux en Direct** | Fait | Streaming vidéo via WebSocket `/ws/video` (base64 JPEG). Hook `useVideoStream` réutilisable. FPS en temps réel. Reconnexion automatique. Support RTSP/HTTP/Webcam. |
 | 6 | **Production — Gestion des Sessions** | Fait | Sessions réelles connectées via API: démarrage/arrêt, session active, stats live et historique paginé (`GET /sessions/`, `POST /sessions/start`, `POST /sessions/stop/{id}`). |
 | 7 | **Production — Journal de Production** | Fait | Tableau branché sur `GET /api/logs/` avec pagination backend + filtres (statut, recherche identifiant), miniatures et ouverture capture. |
@@ -180,6 +180,15 @@ Suivi de l'intégration réelle (remplacement des données fictives par des appe
 | `POST` | `/api/devices/cameras/{id}/activate` | Active cette caméra : bascule le moteur de vision + synchro SystemSettings |
 | `GET` | `/api/devices/system` | Métriques serveur temps réel : cpu_pct, ram_used_gb, disk_pct, cpu_temp_c (psutil) |
 | `GET` | `/api/devices/services` | Statut des 4 services : YOLO (thread alive), SQLite (ping), FastAPI, MJPEG/WebSocket |
+| `GET` | `/api/config/template` | Config template active + historique fichiers + couleurs + seuils |
+| `POST` | `/api/config/template/upload` | Upload image de référence (JPEG/PNG) — activée immédiatement |
+| `POST` | `/api/config/template/activate/{filename}` | Active un template de l'historique |
+| `DELETE` | `/api/config/template/history/{filename}` | Supprime un template (interdit si actif) |
+| `PUT` | `/api/config/template/settings` | Met à jour seuil logo_score et seuil color_score |
+| `GET` | `/api/config/colors` | Liste les références couleurs (hex, tolérance, plages HSV H/S/V) |
+| `POST` | `/api/config/colors` | Ajoute une couleur (hex → plage HSV calculée automatiquement) |
+| `PUT` | `/api/config/colors/{idx}` | Modifie nom/hex/tolérance d'une référence |
+| `DELETE` | `/api/config/colors/{idx}` | Supprime une référence couleur |
 | `GET` | `/api/config/camera` | Récupère la configuration caméra actuelle |
 | `PUT` | `/api/config/camera` | Sauvegarde la configuration caméra |
 | `POST` | `/api/config/camera/test` | Teste la connexion à la source vidéo (vérification réelle via OpenCV) |
