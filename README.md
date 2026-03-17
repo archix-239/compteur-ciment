@@ -21,16 +21,31 @@ Ce projet est une solution complète de vision par ordinateur industrielle pour 
 
 ---
 
-## 🛠️ Installation et Configuration Locale
+## 🛠️ Installation et Développement Local
 
 ### 1. Prérequis
-- Python 3.10+
-- Node.js 18+ & pnpm (ou npm)
-- Caméra USB ou flux RTSP (par défaut, utilise la webcam index 0)
+
+**Serveur / Machine de développement**
+- Python 3.10+ (`python --version`)
+- Node.js 18+ & pnpm (`node --version`)
+- CPU 4 cœurs minimum, 8 Go RAM recommandé
+- Caméra USB ou flux RTSP (par défaut, webcam index 0)
+
+**Poste utilisateur (navigateur)**
+- Chrome 90+, Edge 90+ ou Firefox 88+
+- Résolution d'écran 1 280 × 720 minimum
+- Connexion réseau 5 Mbps minimum (20 Mbps pour le flux vidéo)
+
+> **Configuration complète :** Voir la section [Configuration Requise](./MANUEL_UTILISATEUR.md#2-configuration-requise) du manuel utilisateur pour les détails matériels, les spécifications caméra et les prérequis postes clients.
 
 ### 2. Installation du Backend (Python)
 ```bash
 # Se placer à la racine du projet
+# Créer et activer l'environnement virtuel
+python -m venv venv
+source venv/bin/activate          # Linux / macOS
+venv\Scripts\activate             # Windows
+
 # Installer les dépendances
 pip install -r requirements.txt
 pip install fastapi uvicorn sqlalchemy python-multipart "python-jose[cryptography]" "passlib[bcrypt]" psutil ultralytics opencv-python pyzbar
@@ -43,56 +58,280 @@ python3 -m app.init_db
 ### 3. Installation du Frontend (React)
 ```bash
 cd dashboard
-npm install --legacy-peer-deps
+pnpm install        # ou : npm install --legacy-peer-deps
 ```
 
----
+### 4. Lancer en développement
 
-## 🚦 Procédure de Test
-
-### 1. Lancer le Backend
-Depuis la racine du projet :
+**Terminal 1 — Backend :**
 ```bash
-export PYTHONPATH=$PYTHONPATH:$(pwd)/backend
-uvicorn app.main:app --host 0.0.0.0 --port 8000
+# Depuis la racine du projet
+export PYTHONPATH=$PYTHONPATH:$(pwd)/backend   # Linux/macOS
+set PYTHONPATH=%cd%\backend                    # Windows
+uvicorn app.main:app --host 0.0.0.0 --port 8000 --reload
 ```
-*Le backend sera accessible sur http://localhost:8000 et le flux vidéo sur http://localhost:8000/api/vision/video_feed.*
 
-### 2. Lancer le Frontend
-Dans un nouveau terminal, depuis le dossier `dashboard` :
+**Terminal 2 — Frontend :**
 ```bash
-npm run dev
+cd dashboard
+pnpm dev
+# Interface : http://localhost:3000
 ```
-*L'interface sera accessible par défaut sur http://localhost:3000.*
 
-### 3. Identifiants par défaut
+### 5. Identifiants par défaut (développement)
 - **Utilisateur** : `admin`
 - **Mot de passe** : `admin1234`
 
-> **Sécurité :** Changer le mot de passe admin et définir `JWT_SECRET_KEY` dans `.env` avant toute mise en production.
+> **Sécurité :** Ces identifiants sont à usage de développement uniquement. Changez-les avant toute mise en production.
 
-### 4. Démarrage avec Docker (recommandé pour la production)
+---
+
+## 🚀 Déploiement en Production
+
+### Vue d'ensemble de l'architecture cible
+
+```
+Internet / Réseau local
+        │
+        ▼
+  ┌─────────────┐
+  │    Nginx    │  :80 / :443
+  │  (reverse   │
+  │   proxy)    │
+  └──────┬──────┘
+         │
+    ┌────┴──────┐
+    │           │
+    ▼           ▼
+┌────────┐  ┌──────────┐
+│Frontend│  │ Backend  │
+│ React  │  │ FastAPI  │
+│(static)│  │  :8000   │
+└────────┘  └────┬─────┘
+                 │
+            ┌────▼────┐
+            │  SQLite │
+            │   .db   │
+            └─────────┘
+```
+
+### Étape 1 — Prérequis serveur
+
+#### Matériel
+
+| Composant | Minimum | Recommandé |
+|-----------|---------|-----------|
+| CPU | 4 cœurs @ 2.5 GHz | 8 cœurs @ 3.0 GHz |
+| RAM | 4 Go | 8 Go |
+| GPU | Non requis | NVIDIA 4 Go VRAM (CUDA 11.8+) |
+| Disque | 20 Go libres (SSD) | 100 Go SSD |
+| Réseau | 10 Mbps | 100 Mbps (Ethernet) |
+
+> **Estimation disque captures :** `(sacs/jour) × 100 Ko × (jours rétention)`. Exemple : 8 800 sacs/j × 100 Ko × 90 jours ≈ 79 Go.
+
+#### Logiciels
+
+| Logiciel | Version minimale | Vérification |
+|----------|-----------------|--------------|
+| Docker | 24.0+ | `docker --version` |
+| Docker Compose | 2.20+ | `docker compose version` |
+| Python (hors Docker) | 3.10+ | `python --version` |
+| OS recommandé | Ubuntu 20.04 LTS | — |
+
 ```bash
-# Copier et configurer les variables d'environnement
-cp .env.example .env
-# Éditer .env : JWT_SECRET_KEY, ALLOWED_ORIGINS, etc.
+# Installation Docker sur Ubuntu/Debian
+curl -fsSL https://get.docker.com | sudo sh
+sudo usermod -aG docker $USER
+```
 
-# Construire et démarrer les conteneurs
+### Étape 2 — Configurer les variables d'environnement
+
+```bash
+# Copier le fichier exemple
+cp .env.example .env
+```
+
+Ouvrez `.env` et renseignez **obligatoirement** ces variables :
+
+```env
+# ─── SÉCURITÉ ────────────────────────────────────────────────
+# Générer avec : python -c "import secrets; print(secrets.token_hex(32))"
+JWT_SECRET_KEY=remplacez_par_une_vraie_cle_de_64_caracteres_minimum
+
+# ─── ORIGINES AUTORISÉES ─────────────────────────────────────
+# IP ou nom de domaine du serveur (sans slash final)
+ALLOWED_ORIGINS=http://192.168.1.45
+
+# ─── BASE DE DONNÉES ─────────────────────────────────────────
+# Chemin absolu dans le conteneur (ne pas changer sauf migration PostgreSQL)
+DATABASE_URL=sqlite:////data/cement_counter.db
+
+# ─── VISION ──────────────────────────────────────────────────
+# Mettre à false si pas de GPU ou pas de caméra connectée au serveur
+VISION_ENABLED=true
+
+# ─── LOGS ────────────────────────────────────────────────────
+LOG_LEVEL=INFO
+```
+
+> **Générer une clé JWT sécurisée :**
+> ```bash
+> python -c "import secrets; print(secrets.token_hex(32))"
+> # Exemple de sortie : a3f8c2d1e4b5f6a7b8c9d0e1f2a3b4c5d6e7f8a9b0c1d2e3f4a5b6c7d8e9f0a1
+> ```
+
+### Étape 3 — Construire et démarrer
+
+```bash
+# Construire les images et démarrer les conteneurs en arrière-plan
 docker compose up --build -d
 
-# L'interface est accessible sur http://localhost
-# L'API est accessible sur http://localhost/api/
+# Vérifier que les conteneurs tournent
+docker compose ps
+
+# Consulter les logs en direct
+docker compose logs -f
+```
+
+Sortie attendue :
+```
+NAME                    STATUS          PORTS
+ciment_backend          running         0.0.0.0:8000->8000/tcp
+ciment_frontend         running         0.0.0.0:80->80/tcp
+```
+
+L'interface est accessible sur `http://<IP_SERVEUR>` (port 80).
+
+### Étape 4 — Premier démarrage et sécurisation
+
+```bash
+# Accéder au shell du conteneur backend
+docker compose exec backend bash
+
+# Réinitialiser le mot de passe admin par un mot de passe fort
+python -c "
+from app.database import SessionLocal
+from app import models
+from passlib.context import CryptContext
+pwd = CryptContext(schemes=['bcrypt'], deprecated='auto')
+db = SessionLocal()
+admin = db.query(models.User).filter_by(username='admin').first()
+admin.hashed_password = pwd.hash('VotreNouveauMotDePasseFort!')
+db.commit()
+print('Mot de passe mis à jour.')
+"
+exit
+```
+
+### Étape 5 — Activer HTTPS (recommandé)
+
+**Option A — Certificat Let's Encrypt (domaine public)**
+```bash
+# Installer Certbot
+sudo apt install certbot python3-certbot-nginx
+
+# Obtenir le certificat (remplacer par votre domaine)
+sudo certbot --nginx -d ciment.votre-domaine.com
+```
+
+**Option B — Certificat auto-signé (réseau interne)**
+```bash
+# Générer le certificat
+openssl req -x509 -nodes -days 365 -newkey rsa:2048 \
+  -keyout ssl/key.pem -out ssl/cert.pem \
+  -subj "/CN=ciment-factory/O=Production/C=FR"
+
+# Déclarer les chemins dans .env
+SSL_CERT_PATH=./ssl/cert.pem
+SSL_KEY_PATH=./ssl/key.pem
+```
+
+Puis activer `force_https=true` dans `Administration > Paramètres Système > Sécurité`.
+
+### Étape 6 — Sauvegardes automatiques
+
+```bash
+# Script de sauvegarde quotidienne (à planifier avec cron)
+cat > /opt/backup_ciment.sh << 'EOF'
+#!/bin/bash
+DATE=$(date +%Y%m%d_%H%M%S)
+BACKUP_DIR=/opt/backups/ciment
+
+mkdir -p $BACKUP_DIR
+
+# Sauvegarde de la base de données
+docker compose -f /opt/ciment/docker-compose.yml exec -T backend \
+  cp /data/cement_counter.db /tmp/backup.db
+
+docker cp ciment_backend:/tmp/backup.db $BACKUP_DIR/db_$DATE.db
+
+# Conserver seulement les 30 derniers jours
+find $BACKUP_DIR -name "db_*.db" -mtime +30 -delete
+
+echo "Sauvegarde $DATE terminée : $BACKUP_DIR/db_$DATE.db"
+EOF
+
+chmod +x /opt/backup_ciment.sh
+
+# Planifier tous les jours à 3h du matin
+echo "0 3 * * * /opt/backup_ciment.sh >> /var/log/ciment_backup.log 2>&1" | crontab -
+```
+
+### Étape 7 — Mise à jour de l'application
+
+```bash
+# Récupérer la dernière version
+git pull origin main
+
+# Reconstruire et redémarrer sans interruption
+docker compose up --build -d --no-deps backend
+docker compose up --build -d --no-deps frontend
+
+# Vérifier le démarrage
+docker compose logs --tail=50 backend
+```
+
+### Étape 8 — Supervision des conteneurs (optionnel)
+
+```bash
+# Voir l'utilisation ressources en temps réel
+docker stats
+
+# Redémarrer un conteneur planté
+docker compose restart backend
+
+# Arrêt propre de toute l'application
+docker compose down
+
+# Arrêt + suppression des volumes (ATTENTION : efface la BDD)
+docker compose down -v
+```
+
+### Checklist de mise en production
+
+```
+□ JWT_SECRET_KEY défini et unique (min. 32 caractères)
+□ Mot de passe admin changé depuis admin1234
+□ ALLOWED_ORIGINS restreint à l'IP/domaine du serveur
+□ HTTPS activé (certificat valide ou auto-signé)
+□ Sauvegarde automatique quotidienne planifiée
+□ Pare-feu : port 80/443 ouvert, port 8000 fermé vers l'extérieur
+□ Retention de données configurée dans Paramètres Système
+□ Comptes utilisateurs créés avec les bons rôles
+□ Caméra testée et ligne virtuelle positionnée
 ```
 
 ---
 
-## 📝 Guide d'Utilisation pour le Test
+## 📝 Guide de Démarrage Rapide (Test)
 1. **Connexion** : Connectez-vous avec les identifiants admin.
 2. **Démarrage** : Allez dans "Gestion des Sessions" et cliquez sur **"Nouvelle Session"**. Le moteur de vision commencera à enregistrer les détections.
 3. **Flux Direct** : Allez dans "Flux en Direct" pour voir le retour caméra avec les boîtes de détection IA.
-4. **Comptage** : Faites passer un sac (ou un objet simulé) devant la caméra. Il doit franchir la ligne verticale jaune pour être compté.
+4. **Comptage** : Faites passer un sac (ou un objet simulé) devant la caméra. Il doit franchir la ligne virtuelle pour être compté.
 5. **Vérification** : Consultez le "Journal de Production" pour voir l'entrée créée et cliquez sur l'icône "œil" pour voir la capture d'image enregistrée.
 6. **Arrêt** : Retournez dans "Gestion des Sessions" pour arrêter la session et figer les statistiques.
+
+> **Manuel complet :** Consultez [MANUEL_UTILISATEUR.md](./MANUEL_UTILISATEUR.md) pour la documentation détaillée par rôle (Opérateur, Superviseur, Administrateur).
 
 ## 📁 Structure du Dépôt
 - `backend/app/` : Code source de l'API FastAPI et du moteur Vision.
