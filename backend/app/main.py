@@ -11,10 +11,20 @@ import json
 import asyncio
 import queue
 import signal
+import logging
+import os
 from typing import List
 from pydantic import BaseModel
 from . import models, schemas, database, auth, vision_engine
 from .database import engine, SessionLocal, get_db
+
+# ─── Logging structuré ────────────────────────────────────────────────────────
+logging.basicConfig(
+    level=os.getenv("LOG_LEVEL", "INFO").upper(),
+    format="%(asctime)s [%(levelname)s] %(name)s: %(message)s",
+    datefmt="%Y-%m-%dT%H:%M:%S",
+)
+logger = logging.getLogger("ciment")
 
 models.Base.metadata.create_all(bind=engine)
 
@@ -99,7 +109,7 @@ def handle_vision_event(event_data):
             )
 
     except Exception as e:
-        print(f"Error handling vision event: {e}")
+        logger.error("Vision event handling error: %s", e)
     finally:
         db.close()
 
@@ -189,7 +199,7 @@ async def lifespan(app: FastAPI):
         _color_refs = _json_tmpl.loads(_ts.get("template_colors", "[]"))
         v_engine.get_vision_engine().apply_template_config(_tmpl_path, _threshold, _color_refs, _color_thr)
     except Exception as _e:
-        print(f"WARN: Template config load failed: {_e}")
+        logger.warning("Template config load failed: %s", _e)
     finally:
         _db_tmpl.close()
 
@@ -212,7 +222,7 @@ async def lifespan(app: FastAPI):
             ))
             _db_seed.commit()
     except Exception as _e:
-        print(f"WARN: Camera seed failed: {_e}")
+        logger.warning("Camera seed failed: %s", _e)
     finally:
         _db_seed.close()
 
@@ -230,7 +240,7 @@ async def lifespan(app: FastAPI):
                 ))
         _db_roles.commit()
     except Exception as _re:
-        print(f"WARN: Role seeding failed: {_re}")
+        logger.warning("Role seeding failed: %s", _re)
     finally:
         _db_roles.close()
 
@@ -247,14 +257,14 @@ async def lifespan(app: FastAPI):
                 is_active=True,
             ))
             _db_admin.commit()
-            print("INFO: Compte admin par défaut créé  →  admin / admin1234")
+            logger.info("Compte admin par défaut créé  →  admin / admin1234")
         else:
             # Ensure the admin role is correct (never downgrade an existing account)
             if _existing_admin.role != "admin":
                 _existing_admin.role = "admin"
                 _db_admin.commit()
     except Exception as _ae:
-        print(f"WARN: Admin seed failed: {_ae}")
+        logger.warning("Admin seed failed: %s", _ae)
     finally:
         _db_admin.close()
 
@@ -265,22 +275,31 @@ async def lifespan(app: FastAPI):
     yield  # ── Application is running ──
 
     # Shutdown: stop the vision engine cleanly + cancel scheduler
-    print("INFO: Shutdown signal reçu, arrêt du moteur de vision...")
+    logger.info("Shutdown signal reçu, arrêt du moteur de vision...")
     v_engine = vision_engine.get_vision_engine()
     v_engine.stop()
     if _schedule_task and not _schedule_task.done():
         _schedule_task.cancel()
     _main_loop = None
-    print("INFO: Shutdown complet.")
+    logger.info("Shutdown complet.")
 
 
 app = FastAPI(title="Cement Bag Counter API", version="1.0.0", lifespan=lifespan)
 
 app.mount("/static", StaticFiles(directory="backend/static"), name="static")
 
+_allowed_origins_env = os.getenv("ALLOWED_ORIGINS", "")
+_cors_origins = [o.strip() for o in _allowed_origins_env.split(",") if o.strip()]
+if not _cors_origins:
+    _cors_origins = ["*"]
+    logger.warning(
+        "ALLOWED_ORIGINS non défini — CORS accepte toutes les origines (*). "
+        "Définissez ALLOWED_ORIGINS dans .env pour la production."
+    )
+
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["*"],
+    allow_origins=_cors_origins,
     allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],
@@ -291,6 +310,18 @@ app.add_middleware(
 @app.get("/")
 async def root():
     return {"message": "Welcome to Cement Bag Counter API"}
+
+
+# ─── Health check (utilisé par Docker healthcheck) ────────────────────────────
+from sqlalchemy import text as _sa_text_health
+
+@app.get("/api/health")
+async def health_check(db: Session = Depends(get_db)):
+    try:
+        db.execute(_sa_text_health("SELECT 1"))
+    except Exception:
+        raise HTTPException(status_code=503, detail="Database unavailable")
+    return {"status": "ok", "version": "1.0.0"}
 
 
 # ─── Video Feed: MJPEG fallback (kept for backwards compat) ──────────────────
@@ -736,10 +767,13 @@ async def export_data(
             row_fill = "181818" if i % 2 == 0 else "242424"
             for cell in ws[i + 4]:
                 cell.fill = _XP(start_color=row_fill, end_color=row_fill, fill_type="solid")
-        # Auto-width
+        # Auto-width — skip MergedCell objects which have no column_letter
         for col in ws.columns:
-            max_len = max((len(str(cell.value or "")) for cell in col), default=10)
-            ws.column_dimensions[col[0].column_letter].width = min(max_len + 2, 50)
+            real_cells = [c for c in col if hasattr(c, "column_letter")]
+            if not real_cells:
+                continue
+            max_len = max((len(str(c.value or "")) for c in real_cells), default=10)
+            ws.column_dimensions[real_cells[0].column_letter].width = min(max_len + 2, 50)
         xlsx_buf = _io.BytesIO()
         wb.save(xlsx_buf)
         xlsx_buf.seek(0)
@@ -1449,13 +1483,27 @@ _DEFAULT_ROLES_SEED = [
 
 # ─── Users & Roles ─────────────────────────────────────────────────────────────
 
+def _require_admin(current_user: models.User = Depends(auth.get_current_user)) -> models.User:
+    """Dependency: rejects non-admin users with 403."""
+    if current_user.role != "admin":
+        raise HTTPException(status_code=403, detail="Accès réservé aux administrateurs")
+    return current_user
+
+
 @app.get("/api/users/")
-async def get_users(db: Session = Depends(get_db)):
+async def get_users(
+    db: Session = Depends(get_db),
+    _: models.User = Depends(_require_admin),
+):
     return [_user_to_dict(u) for u in db.query(models.User).order_by(models.User.id).all()]
 
 
 @app.post("/api/users/", status_code=201)
-async def create_user(payload: schemas.UserCreate, db: Session = Depends(get_db)):
+async def create_user(
+    payload: schemas.UserCreate,
+    db: Session = Depends(get_db),
+    _: models.User = Depends(_require_admin),
+):
     if db.query(models.User).filter(models.User.username == payload.username).first():
         raise HTTPException(status_code=409, detail="Nom d'utilisateur déjà pris")
     user = models.User(
@@ -1475,7 +1523,12 @@ async def create_user(payload: schemas.UserCreate, db: Session = Depends(get_db)
 
 
 @app.put("/api/users/{user_id}")
-async def update_user(user_id: int, payload: schemas.UserUpdate, db: Session = Depends(get_db)):
+async def update_user(
+    user_id: int,
+    payload: schemas.UserUpdate,
+    db: Session = Depends(get_db),
+    _: models.User = Depends(_require_admin),
+):
     user = db.query(models.User).filter(models.User.id == user_id).first()
     if not user:
         raise HTTPException(status_code=404, detail="Utilisateur introuvable")
@@ -1488,7 +1541,15 @@ async def update_user(user_id: int, payload: schemas.UserUpdate, db: Session = D
 
 
 @app.patch("/api/users/{user_id}/password")
-async def change_password(user_id: int, payload: schemas.UserPasswordChange, db: Session = Depends(get_db)):
+async def change_password(
+    user_id: int,
+    payload: schemas.UserPasswordChange,
+    db: Session = Depends(get_db),
+    current_user: models.User = Depends(auth.get_current_user),
+):
+    # Un admin peut changer le mdp de n'importe qui ; un user ne peut changer que le sien
+    if current_user.role != "admin" and current_user.id != user_id:
+        raise HTTPException(status_code=403, detail="Vous ne pouvez modifier que votre propre mot de passe")
     user = db.query(models.User).filter(models.User.id == user_id).first()
     if not user:
         raise HTTPException(status_code=404, detail="Utilisateur introuvable")
@@ -1501,7 +1562,13 @@ async def change_password(user_id: int, payload: schemas.UserPasswordChange, db:
 
 
 @app.delete("/api/users/{user_id}")
-async def delete_user(user_id: int, db: Session = Depends(get_db)):
+async def delete_user(
+    user_id: int,
+    db: Session = Depends(get_db),
+    current_user: models.User = Depends(_require_admin),
+):
+    if current_user.id == user_id:
+        raise HTTPException(status_code=400, detail="Vous ne pouvez pas supprimer votre propre compte")
     user = db.query(models.User).filter(models.User.id == user_id).first()
     if not user:
         raise HTTPException(status_code=404, detail="Utilisateur introuvable")
@@ -1513,24 +1580,37 @@ async def delete_user(user_id: int, db: Session = Depends(get_db)):
 
 
 @app.get("/api/users/activity")
-async def get_user_activity(limit: int = 50, db: Session = Depends(get_db)):
+async def get_user_activity(
+    limit: int = 50,
+    page: int = 1,
+    db: Session = Depends(get_db),
+    _: models.User = Depends(_require_admin),
+):
+    offset = (page - 1) * limit
+    total = db.query(models.UserActivity).count()
     rows = (
         db.query(models.UserActivity)
         .order_by(models.UserActivity.timestamp.desc())
+        .offset(offset)
         .limit(limit)
         .all()
     )
-    return [
-        {
-            "id": r.id,
-            "username": r.username,
-            "timestamp": r.timestamp.isoformat(),
-            "action": r.action,
-            "ip_address": r.ip_address,
-            "user_agent": r.user_agent,
-        }
-        for r in rows
-    ]
+    return {
+        "total": total,
+        "page": page,
+        "page_size": limit,
+        "items": [
+            {
+                "id": r.id,
+                "username": r.username,
+                "timestamp": r.timestamp.isoformat(),
+                "action": r.action,
+                "ip_address": r.ip_address,
+                "user_agent": r.user_agent,
+            }
+            for r in rows
+        ],
+    }
 
 
 # ─── Roles ────────────────────────────────────────────────────────────────────
@@ -1547,21 +1627,27 @@ def _role_to_dict(r: models.Role, db) -> dict:
 
 
 @app.get("/api/roles/permissions")
-async def list_permission_catalog():
+async def list_permission_catalog(_: models.User = Depends(auth.get_current_user)):
     """Return the full catalogue of available permission slugs, grouped by module."""
     return PERMISSIONS_CATALOG
 
 
 @app.get("/api/roles/")
-async def list_roles(db: Session = Depends(get_db)):
+async def list_roles(
+    db: Session = Depends(get_db),
+    _: models.User = Depends(auth.get_current_user),
+):
     roles = db.query(models.Role).order_by(models.Role.id).all()
     return [_role_to_dict(r, db) for r in roles]
 
 
 @app.post("/api/roles/", status_code=201)
-async def create_role(payload: schemas.RoleCreate, db: Session = Depends(get_db)):
+async def create_role(
+    payload: schemas.RoleCreate,
+    db: Session = Depends(get_db),
+    _: models.User = Depends(_require_admin),
+):
     import json as _j
-    # Validate name: slug only
     import re as _re
     if not _re.match(r'^[a-z0-9_]+$', payload.name):
         raise HTTPException(status_code=400, detail="Le nom de rôle doit être en minuscules sans espaces (ex: chef_equipe)")
@@ -1580,7 +1666,12 @@ async def create_role(payload: schemas.RoleCreate, db: Session = Depends(get_db)
 
 
 @app.put("/api/roles/{role_id}")
-async def update_role(role_id: int, payload: schemas.RoleUpdate, db: Session = Depends(get_db)):
+async def update_role(
+    role_id: int,
+    payload: schemas.RoleUpdate,
+    db: Session = Depends(get_db),
+    _: models.User = Depends(_require_admin),
+):
     import json as _j
     db_role = db.query(models.Role).filter(models.Role.id == role_id).first()
     if not db_role:
@@ -1599,7 +1690,11 @@ async def update_role(role_id: int, payload: schemas.RoleUpdate, db: Session = D
 
 
 @app.delete("/api/roles/{role_id}")
-async def delete_role(role_id: int, db: Session = Depends(get_db)):
+async def delete_role(
+    role_id: int,
+    db: Session = Depends(get_db),
+    _: models.User = Depends(_require_admin),
+):
     db_role = db.query(models.Role).filter(models.Role.id == role_id).first()
     if not db_role:
         raise HTTPException(status_code=404, detail="Rôle introuvable")

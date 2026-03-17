@@ -13,7 +13,10 @@ import {
   Tooltip, TooltipContent, TooltipProvider, TooltipTrigger,
 } from '@/components/ui/tooltip';
 
-const API = 'http://localhost:8000';
+import { API_URL, getToken } from '@/lib/api';
+const authFetch = (url: string, opts: RequestInit = {}) =>
+  fetch(url, { ...opts, headers: { ...(getToken() ? { Authorization: `Bearer ${getToken()}` } : {}), ...opts.headers } });
+const API = API_URL;
 
 // ── Types ─────────────────────────────────────────────────────────────────────
 interface ColorRef {
@@ -97,7 +100,7 @@ export default function Templates() {
   const loadConfig = useCallback(async () => {
     setLoading(true);
     try {
-      const res = await fetch(`${API}/api/config/template`);
+      const res = await authFetch(`${API}/api/config/template`);
       if (res.ok) {
         const data: TemplateConfig = await res.json();
         setConfig(data);
@@ -121,7 +124,7 @@ export default function Templates() {
     try {
       const fd = new FormData();
       fd.append('file', file);
-      const res = await fetch(`${API}/api/config/template/upload`, { method: 'POST', body: fd });
+      const res = await authFetch(`${API}/api/config/template/upload`, { method: 'POST', body: fd });
       if (res.ok) {
         showFlash('Template uploadé et activé avec succès', true);
         loadConfig();
@@ -140,7 +143,7 @@ export default function Templates() {
   async function activateTemplate(filename: string) {
     setActivating(filename);
     try {
-      const res = await fetch(`${API}/api/config/template/activate/${encodeURIComponent(filename)}`, { method: 'POST' });
+      const res = await authFetch(`${API}/api/config/template/activate/${encodeURIComponent(filename)}`, { method: 'POST' });
       if (res.ok) {
         showFlash(`Template "${filename}" activé`, true);
         loadConfig();
@@ -158,7 +161,7 @@ export default function Templates() {
   async function deleteTemplate(filename: string) {
     setDeletingTpl(filename);
     try {
-      const res = await fetch(`${API}/api/config/template/history/${encodeURIComponent(filename)}`, { method: 'DELETE' });
+      const res = await authFetch(`${API}/api/config/template/history/${encodeURIComponent(filename)}`, { method: 'DELETE' });
       if (res.ok) {
         showFlash(`Template "${filename}" supprimé`, true);
         loadConfig();
@@ -176,7 +179,7 @@ export default function Templates() {
   async function saveSettings() {
     setSavingSettings(true);
     try {
-      const res = await fetch(`${API}/api/config/template/settings`, {
+      const res = await authFetch(`${API}/api/config/template/settings`, {
         method: 'PUT',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
@@ -203,7 +206,7 @@ export default function Templates() {
     if (!newColorName.trim()) { showFlash('Entrez un nom pour la couleur', false); return; }
     setAddingColor(true);
     try {
-      const res = await fetch(`${API}/api/config/colors`, {
+      const res = await authFetch(`${API}/api/config/colors`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ name: newColorName.trim(), hex: newColorHex, tolerance: newColorTol }),
@@ -228,7 +231,7 @@ export default function Templates() {
   async function deleteColor(idx: number) {
     setDeletingColor(idx);
     try {
-      const res = await fetch(`${API}/api/config/colors/${idx}`, { method: 'DELETE' });
+      const res = await authFetch(`${API}/api/config/colors/${idx}`, { method: 'DELETE' });
       if (res.ok) {
         showFlash('Couleur supprimée', true);
         loadConfig();

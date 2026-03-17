@@ -1,4 +1,5 @@
 import cv2
+import logging
 import threading
 import time
 import base64
@@ -10,6 +11,8 @@ from datetime import datetime
 import os
 import sys
 import signal
+
+logger = logging.getLogger("ciment.vision")
 
 
 class VisionEngine:
@@ -127,11 +130,11 @@ class VisionEngine:
                 self._logo_template = img
                 gray = cv2.cvtColor(img, cv2.COLOR_BGR2GRAY)
                 self._logo_kp, self._logo_des = self._orb.detectAndCompute(gray, None)
-                print(f"INFO: Template chargé — {os.path.basename(template_path)} "
-                      f"({img.shape[1]}×{img.shape[0]} px, "
-                      f"{len(self._logo_kp) if self._logo_kp else 0} keypoints ORB)")
+                logger.info("Template chargé — %s (%dx%d px, %d keypoints ORB)",
+                            os.path.basename(template_path), img.shape[1], img.shape[0],
+                            len(self._logo_kp) if self._logo_kp else 0)
             else:
-                print(f"WARN: Impossible de lire le template: {template_path}")
+                logger.warning("Impossible de lire le template: %s", template_path)
 
     def _compute_logo_score(self, roi_bgr: np.ndarray) -> float:
         """ORB-based logo matching score in [0, 1].
@@ -140,7 +143,7 @@ class VisionEngine:
         existing behaviour is preserved.
         """
         if self._logo_template is None or self._logo_des is None:
-            return round(0.90 + np.random.random() * 0.09, 3)
+            return 0.0  # Aucun template chargé — score neutre
         try:
             h, w = self._logo_template.shape[:2]
             roi_resized = cv2.resize(roi_bgr, (w, h), interpolation=cv2.INTER_AREA)
@@ -164,7 +167,7 @@ class VisionEngine:
         Falls back to a plausible random value when no references are defined.
         """
         if not self._color_refs:
-            return round(0.85 + np.random.random() * 0.10, 3)
+            return 0.0  # Aucune référence couleur — score neutre
         try:
             hsv      = cv2.cvtColor(roi_bgr, cv2.COLOR_BGR2HSV)
             total_px = hsv.shape[0] * hsv.shape[1]
@@ -225,7 +228,7 @@ class VisionEngine:
             cap.set(cv2.CAP_PROP_FPS, 30)
             self._apply_capture_properties()
         else:
-            print(f"ERREUR: _open_capture a échoué pour la source: {source}")
+            logger.error("_open_capture a échoué pour la source: %s", source)
 
         return cap
 
@@ -253,10 +256,10 @@ class VisionEngine:
         if model_path and model_path != self.model_path:
             self.model_path = model_path
             try:
-                print(f"INFO: Rechargement du modèle YOLO depuis {self.model_path}")
+                logger.info("Rechargement du modèle YOLO depuis %s", self.model_path)
                 self.model = YOLO(self.model_path)
             except Exception as e:
-                print(f"ERREUR: Rechargement modèle échoué: {e}")
+                logger.error("Rechargement modèle échoué: %s", e)
 
     def apply_virtual_line_config(self, position_percent=None, line_span_percent=None, direction=None):
         if direction is not None:
@@ -306,7 +309,7 @@ class VisionEngine:
             self.cap.set(cv2.CAP_PROP_CONTRAST, float(self.camera_contrast) / 100.0)
             self.cap.set(cv2.CAP_PROP_AUTOFOCUS, 1.0 if self.camera_autofocus else 0.0)
         except Exception as e:
-            print(f"AVERTISSEMENT: Impossible d'appliquer certaines propriétés caméra: {e}")
+            logger.warning("Impossible d'appliquer certaines propriétés caméra: %s", e)
 
     def apply_camera_settings(self, resolution=None, fps=None, brightness=None, contrast=None, autofocus=None):
         if resolution is not None:
@@ -347,21 +350,21 @@ class VisionEngine:
         if self.running:
             return
         if self.thread and self.thread.is_alive():
-            print("AVERTISSEMENT: Start ignoré, thread vision déjà actif")
+            logger.warning("Start ignoré, thread vision déjà actif")
             return
 
-        print(f"INFO: Démarrage du moteur de vision (Source: {self.video_source}, Platform: {sys.platform})...")
+        logger.info("Démarrage du moteur de vision (Source: %s, Platform: %s)", self.video_source, sys.platform)
 
         if self.model is None:
             try:
-                print("INFO: Chargement du modèle YOLO...")
+                logger.info("Chargement du modèle YOLO...")
                 self.model = YOLO(self.model_path)
-                print("INFO: Modèle YOLO chargé avec succès.")
+                logger.info("Modèle YOLO chargé avec succès.")
             except Exception as e:
-                print(f"ERREUR: Impossible de charger le modèle YOLO: {e}")
+                logger.error("Impossible de charger le modèle YOLO: %s", e)
                 return
         else:
-            print("INFO: Modèle YOLO déjà en mémoire, skip du rechargement.")
+            logger.info("Modèle YOLO déjà en mémoire, skip du rechargement.")
 
         # NOTE: Capture is opened inside _run_loop (not here) because
         # DirectShow on Windows uses COM objects that are bound to the
@@ -378,7 +381,7 @@ class VisionEngine:
         if not self.running and not (self.thread and self.thread.is_alive()):
             return True
 
-        print("INFO: Arrêt du moteur de vision...")
+        logger.info("Arrêt du moteur de vision...")
         self.running = False
         self._stop_event.set()
 
@@ -395,14 +398,14 @@ class VisionEngine:
             self.thread.join(timeout=8)
             if self.thread.is_alive():
                 stopped = False
-                print("ERREUR: Le thread vision ne s'est pas arrêté; restart annulé pour éviter conflit FFMPEG.")
+                logger.error("Le thread vision ne s'est pas arrêté; restart annulé pour éviter conflit FFMPEG.")
 
         if stopped:
             self.thread = None
 
         self.annotated_frame = None
         self.latest_frame = None
-        print("INFO: Moteur de vision arrêté.")
+        logger.info("Moteur de vision arrêté.")
         return stopped
 
     def _broadcast_frame(self, frame):
@@ -445,16 +448,16 @@ class VisionEngine:
         if self.cap and self.cap.isOpened():
             ret, test_frame = self.cap.read()
             if ret and test_frame is not None:
-                print(f"INFO: Source vidéo OK — première frame lue ({test_frame.shape[1]}x{test_frame.shape[0]})")
+                logger.info("Source vidéo OK — première frame lue (%dx%d)", test_frame.shape[1], test_frame.shape[0])
             else:
-                print(f"ERREUR: Source ouverte mais impossible de lire une frame (source: {self.video_source})")
+                logger.error("Source ouverte mais impossible de lire une frame (source: %s)", self.video_source)
                 self.cap.release()
                 self.cap = None
 
         while self.running and not self._stop_event.is_set():
             if self.cap is None or not self.cap.isOpened():
                 reconnect_delay = min(2 ** reconnect_attempts, max_reconnect_delay)
-                print(f"AVERTISSEMENT: Flux vidéo perdu. Reconnexion dans {reconnect_delay}s...")
+                logger.warning("Flux vidéo perdu. Reconnexion dans %ds...", reconnect_delay)
                 if self._stop_event.wait(timeout=reconnect_delay):
                     break
                 if self.cap:
@@ -469,7 +472,7 @@ class VisionEngine:
             success, frame = self.cap.read()
             if not success:
                 reconnect_delay = min(2 ** reconnect_attempts, max_reconnect_delay)
-                print(f"AVERTISSEMENT: Lecture frame échouée. Reconnexion dans {reconnect_delay}s...")
+                logger.warning("Lecture frame échouée. Reconnexion dans %ds...", reconnect_delay)
                 if self.cap:
                     try:
                         self.cap.release()
@@ -516,10 +519,10 @@ class VisionEngine:
             reconnect_attempts = 0
             frames_read += 1
             if frames_read == 1:
-                print(f"INFO: Vision engine — flux actif, première frame capturée")
+                logger.info("Vision engine — flux actif, première frame capturée")
             elif frames_read % 300 == 0:
                 sub_count = len(self.video_subscribers)
-                print(f"INFO: Vision engine — {frames_read} frames lues, {sub_count} subscriber(s) WebSocket")
+                logger.debug("Vision engine — %d frames lues, %d subscriber(s) WebSocket", frames_read, sub_count)
 
             self.latest_frame = frame.copy()
 
@@ -532,7 +535,7 @@ class VisionEngine:
                 last_broadcast = now
                 if frames_read <= 3:
                     sub_count = len(self.video_subscribers)
-                    print(f"INFO: Broadcast frame #{frames_read} envoyée ({sub_count} subscriber(s))")
+                    logger.debug("Broadcast frame #%d envoyée (%d subscriber(s))", frames_read, sub_count)
 
             frames_for_inference += 1
             run_inference = (frames_for_inference % self.inference_every_n_frames) == 0
@@ -621,7 +624,7 @@ class VisionEngine:
                                 try:
                                     self.on_count_callback(event_data)
                                 except Exception as e:
-                                    print(f"ERREUR callback comptage: {e}")
+                                    logger.error("Erreur callback comptage: %s", e)
 
             else:
                 if self.last_annotated_frame is not None:

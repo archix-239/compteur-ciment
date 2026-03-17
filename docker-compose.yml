@@ -1,0 +1,52 @@
+version: "3.9"
+
+services:
+  # ── Backend FastAPI ─────────────────────────────────────────────────────────
+  backend:
+    build:
+      context: ./backend
+      dockerfile: Dockerfile
+    container_name: ciment_backend
+    restart: unless-stopped
+    env_file:
+      - .env
+    environment:
+      DATABASE_URL: sqlite:////data/cement_counter.db
+    volumes:
+      - db_data:/data
+      - ./models:/app/models:ro        # modèles YOLO (lecture seule)
+      - ./backend/static:/app/static   # fichiers statiques
+    ports:
+      - "8000:8000"
+    networks:
+      - ciment_net
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:8000/api/health"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 15s
+
+  # ── Frontend React / Nginx ──────────────────────────────────────────────────
+  frontend:
+    build:
+      context: ./dashboard
+      dockerfile: Dockerfile
+      args:
+        VITE_API_URL: ""   # vide = proxy Nginx, pas d'URL absolue nécessaire
+    container_name: ciment_frontend
+    restart: unless-stopped
+    ports:
+      - "80:80"
+    depends_on:
+      - backend
+    networks:
+      - ciment_net
+
+volumes:
+  db_data:
+    name: ciment_db_data
+
+networks:
+  ciment_net:
+    name: ciment_network

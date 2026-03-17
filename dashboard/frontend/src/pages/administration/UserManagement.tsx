@@ -18,7 +18,10 @@ import {
   Tooltip, TooltipContent, TooltipProvider, TooltipTrigger,
 } from '@/components/ui/tooltip';
 
-const API = 'http://localhost:8000';
+import { API_URL, getToken } from '@/lib/api';
+const authFetch = (url: string, opts: RequestInit = {}) =>
+  fetch(url, { ...opts, headers: { ...(getToken() ? { Authorization: `Bearer ${getToken()}` } : {}), ...opts.headers } });
+const API = API_URL;
 
 // ── Types ─────────────────────────────────────────────────────────────────────
 interface UserRow {
@@ -193,7 +196,7 @@ export default function UserManagement() {
   const loadUsers = useCallback(async () => {
     setLoading(true);
     try {
-      const res = await fetch(`${API}/api/users/`);
+      const res = await authFetch(`${API}/api/users/`);
       if (res.ok) setUsers(await res.json());
     } catch { showFlash('Erreur de connexion au backend', false); }
     finally { setLoading(false); }
@@ -202,8 +205,11 @@ export default function UserManagement() {
   const loadActivity = useCallback(async () => {
     setActLoading(true);
     try {
-      const res = await fetch(`${API}/api/users/activity?limit=50`);
-      if (res.ok) setActivity(await res.json());
+      const res = await authFetch(`${API}/api/users/activity?limit=50&page=1`);
+      if (res.ok) {
+        const data = await res.json();
+        setActivity(Array.isArray(data) ? data : (data.items ?? []));
+      }
     } catch { /* silent */ }
     finally { setActLoading(false); }
   }, []);
@@ -211,8 +217,8 @@ export default function UserManagement() {
   const loadRoles = useCallback(async () => {
     try {
       const [rolesRes, catalogRes] = await Promise.all([
-        fetch(`${API}/api/roles/`),
-        fetch(`${API}/api/roles/permissions`),
+        authFetch(`${API}/api/roles/`),
+        authFetch(`${API}/api/roles/permissions`),
       ]);
       if (rolesRes.ok) {
         const data: RoleRow[] = await rolesRes.json();
@@ -265,12 +271,12 @@ export default function UserManagement() {
     try {
       let res: Response;
       if (editId) {
-        res = await fetch(`${API}/api/users/${editId}`, {
+        res = await authFetch(`${API}/api/users/${editId}`, {
           method: 'PUT', headers: { 'Content-Type': 'application/json' },
           body: JSON.stringify({ full_name: form.full_name || null, role: form.role }),
         });
       } else {
-        res = await fetch(`${API}/api/users/`, {
+        res = await authFetch(`${API}/api/users/`, {
           method: 'POST', headers: { 'Content-Type': 'application/json' },
           body: JSON.stringify({ username: form.username, full_name: form.full_name || null, role: form.role, password: form.password }),
         });
@@ -289,7 +295,7 @@ export default function UserManagement() {
 
   async function toggleActive(u: UserRow) {
     try {
-      const res = await fetch(`${API}/api/users/${u.id}`, {
+      const res = await authFetch(`${API}/api/users/${u.id}`, {
         method: 'PUT', headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ is_active: !u.is_active }),
       });
@@ -301,7 +307,7 @@ export default function UserManagement() {
   async function doDelete(u: UserRow) {
     setDeleting(u.id); setConfirmDelete(null);
     try {
-      const res = await fetch(`${API}/api/users/${u.id}`, { method: 'DELETE' });
+      const res = await authFetch(`${API}/api/users/${u.id}`, { method: 'DELETE' });
       if (res.ok) { showFlash(`${u.username} supprimé`, true); loadUsers(); loadActivity(); }
       else { const err = await res.json().catch(() => ({})); showFlash((err as { detail?: string }).detail ?? 'Erreur', false); }
     } catch { showFlash('Erreur réseau', false); }
@@ -312,7 +318,7 @@ export default function UserManagement() {
     if (!pwdModal || newPwd.length < 6) { showFlash('Le mot de passe doit faire au moins 6 caractères', false); return; }
     setPwdSaving(true);
     try {
-      const res = await fetch(`${API}/api/users/${pwdModal.id}/password`, {
+      const res = await authFetch(`${API}/api/users/${pwdModal.id}/password`, {
         method: 'PATCH', headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ new_password: newPwd }),
       });
@@ -331,7 +337,7 @@ export default function UserManagement() {
       if (!selectedRole.is_builtin && descDraft !== selectedRole.description) {
         body.description = descDraft;
       }
-      const res = await fetch(`${API}/api/roles/${selectedRole.id}`, {
+      const res = await authFetch(`${API}/api/roles/${selectedRole.id}`, {
         method: 'PUT', headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify(body),
       });
@@ -350,7 +356,7 @@ export default function UserManagement() {
     if (!roleForm.name.trim() || !roleForm.label.trim()) return;
     setRoleSaving(true);
     try {
-      const res = await fetch(`${API}/api/roles/`, {
+      const res = await authFetch(`${API}/api/roles/`, {
         method: 'POST', headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify(roleForm),
       });
@@ -369,7 +375,7 @@ export default function UserManagement() {
   async function doDeleteRole(r: RoleRow) {
     setDeletingRole(r.id); setConfirmDeleteRole(null);
     try {
-      const res = await fetch(`${API}/api/roles/${r.id}`, { method: 'DELETE' });
+      const res = await authFetch(`${API}/api/roles/${r.id}`, { method: 'DELETE' });
       if (res.ok) {
         showFlash(`Rôle "${r.label}" supprimé`, true);
         setSelectedRole(null);

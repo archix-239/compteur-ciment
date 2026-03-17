@@ -1,5 +1,6 @@
-const API_BASE_URL = `http://${window.location.hostname}:8000`;
-const WS_BASE_URL = `ws://${window.location.hostname}:8000`;
+const _envApi = (import.meta as any).env?.VITE_API_URL as string | undefined;
+const API_BASE_URL = _envApi ?? `http://${window.location.hostname}:8000`;
+const WS_BASE_URL = API_BASE_URL.replace(/^http/, 'ws');
 
 export const API_URL = API_BASE_URL;
 export const WS_URL = `${WS_BASE_URL}/ws`;

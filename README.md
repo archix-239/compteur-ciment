@@ -67,7 +67,22 @@ npm run dev
 
 ### 3. Identifiants par défaut
 - **Utilisateur** : `admin`
-- **Mot de passe** : `admin123`
+- **Mot de passe** : `admin1234`
+
+> **Sécurité :** Changer le mot de passe admin et définir `JWT_SECRET_KEY` dans `.env` avant toute mise en production.
+
+### 4. Démarrage avec Docker (recommandé pour la production)
+```bash
+# Copier et configurer les variables d'environnement
+cp .env.example .env
+# Éditer .env : JWT_SECRET_KEY, ALLOWED_ORIGINS, etc.
+
+# Construire et démarrer les conteneurs
+docker compose up --build -d
+
+# L'interface est accessible sur http://localhost
+# L'API est accessible sur http://localhost/api/
+```
 
 ---
 
@@ -108,16 +123,29 @@ Suivi de l'intégration réelle (remplacement des données fictives par des appe
 | 12 | **Alertes — Gestion des Alertes** | Fait | `GET /api/alerts/history` : historique réel depuis la BDD. `GET\|PUT /api/alerts/settings` : paramètres persistés (son, email, Slack, téléphone). `PATCH /api/alerts/history/{id}/read`, `POST /api/alerts/history/read-all`, `DELETE /api/alerts/history[/{id}]` : gestion lecture/suppression. `PUT /api/alerts/rules/{id}` : édition seuils + activation règles. `POST /api/alerts/history` : alerte manuelle opérateur. `POST /api/alerts/evaluate` : évaluation immédiate des règles vs métriques réelles. Badge unread count en temps réel sur le Sidebar (toutes les 30s). Tooltips `?` sur chaque section. |
 | 13 | **Rapports — Production** | Fait | `GET /api/reports/production?period=day\|week\|month` : métriques réelles (totalBags, avgInterval, detectionRate, sessionHours, availability, OEE) + deltas vs période précédente. Graphique comparaison actuelle vs précédente (buckets horaires/journaliers/hebdo). Décomposition OEE bar chart (Disponibilité, Performance, Qualité). Analyses clés dynamiques (pic de production, consistance). Export CSV direct `GET /api/reports/export/csv`. Icônes `?` tooltip sur chaque indicateur. |
 | 14 | **Rapports — Export de Données** | Fait | Exports manuels **CSV / XLSX / PDF / JSON** sur 4 sources (comptages bruts, sessions, anomalies, qualité) × 5 périodes (aujourd'hui, hier, 7j, 30j, personnalisé). XLSX avec mise en forme industrielle (`openpyxl`). PDF A4 paysage mis en forme (`fpdf2`, max 2 000 lignes). Prévisualisation en temps réel (lignes + taille). Planification automatique : fréquence quotidienne/hebdo/mensuelle, heure UTC, source, format, période — sauvegardé en BDD. Déclenchement manuel immédiat. Historique des exports automatiques avec lien de téléchargement. Historique des 20 derniers exports manuels. Tooltips `?` partout. |
-| 15 | Rapports — Piste d'Audit | En attente | — |
+| 15 | **Rapports — Piste d'Audit** | Fait | `GET /api/audit/?page=&page_size=&action=&username=` : journal d'audit paginé côté serveur avec filtres par type d'action et recherche par username. Actions color-codées (login, failed_login, created, updated, deleted, password_changed). Export CSV côté client (1 000 entrées max). Statistiques : total événements, utilisateurs uniques, connexions, échecs. |
 | 16 | **Administration — Utilisateurs** | Fait | Nouveau modèle BDD `user_activities` + colonnes `last_login`/`login_count` sur `users` (migration automatique). `GET /api/users/` : liste complète avec last_login + login_count. `POST /api/users/` : création (bcrypt, min 6 car.). `PUT /api/users/{id}` : modification nom/rôle/is_active. `PATCH /api/users/{id}/password` : changement mot de passe (bcrypt). `DELETE /api/users/{id}` : suppression + enregistrement audit. `GET /api/users/activity?limit=N` : journal d'activité (connexions, échecs, créations, suppressions, changements mdp). `POST /token` enrichi : enregistre `UserActivity` (login / failed_login) avec IP + User-Agent, met à jour `last_login` et `login_count`. KPI strip (total/actifs/admins). Recherche temps réel. Modal ajout/édition. Modal changement mdp (toggle visibilité). Toggle actif/inactif. Dialog suppression. Onglet Historique scrollable (50 entrées). Onglet Rôles & Permissions avec compteur live par rôle. Note sécurité bcrypt/JWT. Flash banner résultat. |
-| 17 | **Administration — Paramètres Système** | Partiel | `GET/PUT /api/system/general-settings` : identité site, fuseau, langue, préférences notifications, niveau log, rétention. Onglet **Alertes** connecté : canaux (son, email, Slack, téléphone superviseur) via `GET/PUT /api/alerts/settings` + aperçu des règles avec toggle via `PUT /api/alerts/rules/{id}`. Tooltips `?` sur chaque paramètre. *(Sécurité et Backup restent UI statique.)* |
+| 17 | **Administration — Paramètres Système** | Fait | `GET/PUT /api/system/general-settings` : identité site, fuseau, langue, préférences notifications, niveau log, rétention. Onglet **Alertes** : canaux (son, email, Slack, téléphone superviseur). Onglet **Sécurité** : `GET/PUT /api/system/security-settings` (jwt_expire_minutes, max_login_attempts, session_timeout, 2FA, force_https). Onglet **Archivage** : export JSON, import JSON, téléchargement `.db`. Onglet **Performance** : `GET/PUT /api/system/performance-settings`. |
 | 18 | **Administration — Appareils** | Fait | Nouveau modèle BDD `cameras` (multi-caméra). `GET /api/devices/cameras` : liste toutes les caméras (nom, type, URL, résolution, FPS, statut dernier test, latence). `POST /api/devices/cameras` : ajout caméra. `PUT /api/devices/cameras/{id}` : modification. `DELETE /api/devices/cameras/{id}` : suppression (interdit sur caméra active). `POST /api/devices/cameras/{id}/test` : connexion OpenCV réelle (met à jour `last_status`, `last_latency_ms`, `last_tested_at`). `POST /api/devices/cameras/{id}/activate` : bascule le moteur de vision vers cette caméra sans redémarrage (met à jour les SystemSettings legacy). `GET /api/devices/system` : CPU/RAM/disque réels (psutil), température CPU. `GET /api/devices/services` : statut 4 services (YOLO thread, SQLite, FastAPI, MJPEG). Seed automatique depuis SystemSettings au 1er démarrage. Modal ajout/édition. Dialog de confirmation suppression. Flash banner résultat. |
-| 19 | Administration — API | En attente | — |
+| 19 | **Administration — API** | Fait | `GET /api/apikeys/` : liste les clés actives (préfixe, nom, scope, date création). `POST /api/apikeys/` : génère une clé sécurisée (`cmt_` + 48 hex) — raw key affichée **une seule fois**, stockée en SHA-256. `DELETE /api/apikeys/{id}` : révocation avec confirmation. Scopes : read / write / admin. Documentation d'utilisation intégrée. |
 | 20 | **Analytique — Performance (OEE)** | Fait | `GET /api/analytics/oee?hours=N` : OEE/TRS calculé depuis la BDD (disponibilité sessions, performance vs cible 1 100 sacs/h, qualité conformes/total). Sélecteur de période 6H / 24H / 7J / 30J. Graphique production réel + forecast (moyenne mobile 3 buckets) + cible. Camembert répartition du temps (production/micro-arrêts/pannes/inactivité). Recommandations IA dynamiques. Icônes `?` avec tooltip explicatif sur chaque indicateur. |
 | 21 | **Maintenance — Santé Système** | Fait | `GET /api/system/health` enrichi : CPU/RAM/disque réels (psutil), uptime OS réel, I/O réseau Rx/Tx (Mbps, delta entre appels), température CPU (Linux/Mac via psutil — N/A sur Windows), statut réel des 4 services (moteur YOLOv8 thread alive, FastAPI, SQLite, flux MJPEG), métriques BDD réelles (taille fichier, nb logs/sessions/alertes, temps requête mesuré), 10 derniers événements depuis AlertHistory + Sessions. Barres colorées (vert/jaune/rouge). Tooltips `?`. Actualisation auto toutes les 5s. |
 | 22 | **Maintenance — Base de Données** | Fait | `GET /api/database/stats` : taille BDD, fragmentation (PRAGMA freelist/page_count), intégrité (quick_check), stats par table (rows, taille via dbstat, query_ms, dernier enregistrement), usage disque psutil. `POST /api/database/optimize` : VACUUM (sqlite3 raw, hors transaction) + ANALYZE + espace récupéré. `POST /api/database/reindex` : REINDEX complet + temps elapsed. `GET /api/database/backup` : téléchargement direct du fichier `.db`. `POST /api/database/archive` : suppression sessions terminées + logs antérieurs à la rétention configurée. `POST /api/database/purge` : suppression définitive logs + captures + quality_reviews (subquery). Dialog de confirmation avant actions destructives. Badge fragmentation coloré. Card statut santé dynamique (vert si saine, jaune si fragmentée). |
 | 23 | **Maintenance — Diagnostics** | Fait | `GET /api/diagnostics/metrics` : FPS (moteur ou delta 60s), inference_ms (attribut engine ou proxy intervalle), précision (conformes/total), CPU/RAM psutil. `GET /api/diagnostics/logs` : flux structuré AlertHistory + Sessions (INFO/WARN/ERROR/SUCCESS). `GET /api/diagnostics/logs/download` : export .txt horodaté. `POST /api/diagnostics/run-tests` : **5 tests réels** — (1) **YOLO** `v_eng.running + thread.is_alive()` ; (2) **SQLite** écriture+suppression SystemSetting mesurée en ms ; (3) **Disque** écriture 1 MB fichier temp, calcul MB/s ; (4) **API** latence d'un COUNT SQL ; (5) **Caméra** connexion OpenCV réelle via `_test_camera_sync` (lit `camera_source_type`/`camera_url` depuis SystemSettings, retourne résolution, FPS détecté, latence). `POST /api/diagnostics/benchmark` : 20 inférences YOLOv11 sur frame 640×640 vierge — avg/min/max ms + FPS équivalent. Console avec filtre type + effacement local. Badge résultat tests sur l'onglet. Historique benchmark (5 derniers). Auto-refresh 10s ON/OFF. |
-| 24 | Intégration — Tiers | En attente | — |
+| 24 | **Intégration — Tiers** | Fait | `GET/PUT /api/system/integration-settings` : configuration Webhook (URL + secret), SMTP (Gmail, Outlook, etc.), Slack (webhook URL) et Microsoft Teams (webhook URL) avec toggles d'activation. `POST /api/system/test-webhook` : test live du webhook configuré (httpx async). |
+
+### Récapitulatif des corrections de sécurité appliquées
+
+| # | Problème | Correction |
+|---|----------|-----------|
+| 1 | Endpoints `/api/users/*` et `/api/roles/*` publics | `_require_admin` dependency sur tous ces endpoints |
+| 2 | `localhost:8000` hardcodé dans 3 pages frontend | Remplacé par `API_URL` depuis `@/lib/api` + helper `authFetch` |
+| 3 | Secret JWT avec valeur par défaut faible | Avertissement `logger.warning` au démarrage si valeur par défaut |
+| 4 | CORS `"*"` par défaut avec `allow_credentials=True` | Avertissement si `ALLOWED_ORIGINS` non défini |
+| 5 | `print()` (~25 occurrences) dans `vision_engine.py` | Remplacés par `logger.info/warning/error/debug` |
+| 6 | Scores `logo_score` et `color_score` aléatoires si pas de template | Retournent `0.0` (score neutre déterministe) |
+| 7 | `auth.py` : expiration token fixe à 30min, non configurable | Lit `JWT_ACCESS_TOKEN_EXPIRE_MINUTES` depuis l'env (défaut 60min) |
+| 8 | Pagination manquante sur `/api/users/activity` | Paramètre `page` ajouté, réponse paginée avec `total` |
 
 ### API & WebSocket — Référence rapide
 

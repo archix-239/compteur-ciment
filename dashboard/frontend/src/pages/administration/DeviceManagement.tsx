@@ -12,7 +12,10 @@ import {
   Tooltip, TooltipContent, TooltipProvider, TooltipTrigger,
 } from '@/components/ui/tooltip';
 
-const API = 'http://localhost:8000';
+import { API_URL, getToken } from '@/lib/api';
+const authFetch = (url: string, opts: RequestInit = {}) =>
+  fetch(url, { ...opts, headers: { ...(getToken() ? { Authorization: `Bearer ${getToken()}` } : {}), ...opts.headers } });
+const API = API_URL;
 
 // ── Types ────────────────────────────────────────────────────────────────────
 interface CameraDevice {
@@ -169,8 +172,8 @@ export default function DeviceManagement() {
     try {
       const body = { ...form, notes: form.notes || null };
       const res = editId
-        ? await fetch(`${API}/api/devices/cameras/${editId}`, { method: 'PUT', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body) })
-        : await fetch(`${API}/api/devices/cameras`,           { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body) });
+        ? await authFetch(`${API}/api/devices/cameras/${editId}`, { method: 'PUT', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body) })
+        : await authFetch(`${API}/api/devices/cameras`,           { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body) });
       if (res.ok) {
         showFlash(editId ? 'Caméra mise à jour' : 'Caméra ajoutée', true);
         setModalOpen(false);
@@ -189,7 +192,7 @@ export default function DeviceManagement() {
   async function testCamera(cam: CameraDevice) {
     setTesting(cam.id);
     try {
-      const res = await fetch(`${API}/api/devices/cameras/${cam.id}/test`, { method: 'POST' });
+      const res = await authFetch(`${API}/api/devices/cameras/${cam.id}/test`, { method: 'POST' });
       const data = await res.json();
       if (data.success) {
         showFlash(`${cam.name} — connexion OK (${data.latency_ms} ms)`, true);
@@ -207,7 +210,7 @@ export default function DeviceManagement() {
   async function activateCamera(cam: CameraDevice) {
     setActivating(cam.id);
     try {
-      const res = await fetch(`${API}/api/devices/cameras/${cam.id}/activate`, { method: 'POST' });
+      const res = await authFetch(`${API}/api/devices/cameras/${cam.id}/activate`, { method: 'POST' });
       if (res.ok) {
         showFlash(`${cam.name} activée — moteur de vision basculé`, true);
         loadAll();
@@ -226,7 +229,7 @@ export default function DeviceManagement() {
     setDeleting(cam.id);
     setConfirmDelete(null);
     try {
-      const res = await fetch(`${API}/api/devices/cameras/${cam.id}`, { method: 'DELETE' });
+      const res = await authFetch(`${API}/api/devices/cameras/${cam.id}`, { method: 'DELETE' });
       if (res.ok) {
         showFlash(`${cam.name} supprimée`, true);
         loadAll();
