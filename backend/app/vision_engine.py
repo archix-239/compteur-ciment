@@ -61,8 +61,8 @@ class VisionEngine:
 
         self.track_seen_before_line = set()
         self.object_data = defaultdict(lambda: {"qr_uuid": None})
-        self.counted_conforme_uuids = set()
-        self.counted_rejete_ids = set()
+        self.counted_track_ids: set = set()          # track_ids already counted
+        self.counted_track_status: dict = {}         # track_id → "conforme"|"rejete"
         self.active_session_id = None
 
         # Callback for events
@@ -100,8 +100,8 @@ class VisionEngine:
     def set_active_session(self, session_id):
         self.active_session_id = session_id
         # Reset counters for new session
-        self.counted_conforme_uuids.clear()
-        self.counted_rejete_ids.clear()
+        self.counted_track_ids.clear()
+        self.counted_track_status.clear()
         self.track_seen_before_line.clear()
         self.object_data.clear()
 
@@ -566,27 +566,21 @@ class VisionEngine:
                         if roi_bgr.size == 0:
                             continue
 
-                        if self.object_data[track_id]["qr_uuid"] is None:
-                            decoded_qrs = qr_decode(roi_bgr)
-                            if decoded_qrs:
-                                qr_data = decoded_qrs[0].data.decode('utf-8')
-                                self.object_data[track_id]["qr_uuid"] = qr_data
+                        already_counted = track_id in self.counted_track_ids
 
-                        current_uuid = self.object_data[track_id]["qr_uuid"]
-                        is_conforme = current_uuid is not None
-
-                        bag_status = "conforme" if is_conforme else "rejeté"
-                        box_color = (0, 255, 0) if is_conforme else (0, 0, 255)
-
-                        already_counted = (is_conforme and current_uuid in self.counted_conforme_uuids) or \
-                                          (not is_conforme and track_id in self.counted_rejete_ids)
-
+                        # Overlay colors (BGR):
+                        #   orange  = being tracked, not yet crossed
+                        #   green   = counted as conforme
+                        #   red     = counted as rejeté
                         if already_counted:
-                            bag_status = "compté"
-                            box_color = (255, 0, 0)
+                            status = self.counted_track_status.get(track_id, "conforme")
+                            box_color = (0, 200, 0) if status == "conforme" else (0, 0, 220)
+                            label = f"ID:{track_id} - {status.upper()}"
+                        else:
+                            box_color = (0, 165, 255)   # orange
+                            label = f"ID:{track_id}"
 
                         cv2.rectangle(annotated_frame, (x1, y1), (x2, y2), box_color, 2)
-                        label = f"ID:{track_id} - {bag_status.upper()}"
                         cv2.putText(annotated_frame, label, (x1, y1 - 10), cv2.FONT_HERSHEY_SIMPLEX, 0.5, box_color, 2)
 
                         center_x = (x1 + x2) // 2
@@ -600,6 +594,24 @@ class VisionEngine:
                         if self.active_session_id and not already_counted and crossed:
                             detection_score = float(results[0].boxes.conf[track_ids.index(track_id)])
 
+                            # Compute quality scores at crossing time
+                            logo_score  = self._compute_logo_score(roi_bgr)
+                            color_score = self._compute_color_score(roi_bgr)
+
+                            # Conformity decision: logo AND/OR colour depending on what is configured
+                            has_logo_check  = self._logo_template is not None
+                            has_color_check = bool(self._color_refs)
+                            if not has_logo_check and not has_color_check:
+                                # No quality checks configured — count everything as conforme
+                                is_conforme = True
+                            elif has_logo_check and has_color_check:
+                                is_conforme = (logo_score  >= self._logo_threshold and
+                                               color_score >= self._color_threshold)
+                            elif has_logo_check:
+                                is_conforme = logo_score >= self._logo_threshold
+                            else:
+                                is_conforme = color_score >= self._color_threshold
+
                             # Save capture
                             timestamp_str = datetime.now().strftime('%Y%m%d_%H%M%S_%f')
                             filename = f"capture_{timestamp_str}.jpg"
@@ -609,19 +621,17 @@ class VisionEngine:
                             event_data = {
                                 "session_id": self.active_session_id,
                                 "status": "conforme" if is_conforme else "rejete",
-                                "identifier": current_uuid if is_conforme else f"track_id_{track_id}",
+                                "identifier": f"track_id_{track_id}",
                                 "timestamp": datetime.utcnow(),
                                 "detection_score": detection_score,
                                 "capture_url": f"/static/captures/{filename}",
-                                "logo_score": self._compute_logo_score(roi_bgr),
-                                "color_score": self._compute_color_score(roi_bgr),
+                                "logo_score": logo_score,
+                                "color_score": color_score,
                                 "interval": 2.5
                             }
 
-                            if is_conforme:
-                                self.counted_conforme_uuids.add(current_uuid)
-                            else:
-                                self.counted_rejete_ids.add(track_id)
+                            self.counted_track_ids.add(track_id)
+                            self.counted_track_status[track_id] = "conforme" if is_conforme else "rejete"
                             self.track_seen_before_line.discard(track_id)
 
                             if self.on_count_callback:

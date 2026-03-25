@@ -57,6 +57,7 @@ export default function LiveStream() {
             ...prev,
             verifiedBags: session.total_count ?? 0,
             rejectedBags: session.rejected_count ?? 0,
+            detectedObjects: (session.total_count ?? 0) + (session.rejected_count ?? 0),
           }));
         } else {
           setSessionActive(false);
