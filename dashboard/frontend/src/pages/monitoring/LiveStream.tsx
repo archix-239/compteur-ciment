@@ -1,7 +1,7 @@
 import { useState, useEffect, useRef } from 'react';
 import { API_URL, WS_URL } from '@/lib/api';
 import { useVideoStream } from '@/hooks/useVideoStream';
-import { Camera, Activity, AlertCircle, Maximize2, RefreshCcw, AlertOctagon, Zap, Bell, Loader2 } from 'lucide-react';
+import { Camera, Activity, AlertCircle, Maximize2, RefreshCcw, AlertOctagon, Zap, Bell, Loader2, PauseCircle } from 'lucide-react';
 import { Card } from '@/components/ui/card';
 import { Button } from '@/components/ui/button';
 import { PageHeader } from '@/components/PageHeader';
@@ -35,6 +35,7 @@ export default function LiveStream() {
   const [runtime, setRuntime] = useState<RuntimeInfo | null>(null);
   const [recentAlerts, setRecentAlerts] = useState<AlertItem[]>([]);
   const [alertsLoading, setAlertsLoading] = useState(true);
+  const [sessionActive, setSessionActive] = useState(false);
   const [stats, setStats] = useState({
     latency: 0,
     detectedObjects: 0,
@@ -46,10 +47,32 @@ export default function LiveStream() {
   });
 
   useEffect(() => {
-    fetch(`${API_URL}/api/dashboard/summary`)
+    // Load counts from the active session (or the last completed one — NOT all-time totals)
+    fetch(`${API_URL}/sessions/active`)
       .then(res => res.json())
-      .then(data => {
-        setStats(prev => ({ ...prev, verifiedBags: data.totalBags, rejectedBags: data.rejectedBags }));
+      .then(session => {
+        if (session) {
+          setSessionActive(true);
+          setStats(prev => ({
+            ...prev,
+            verifiedBags: session.total_count ?? 0,
+            rejectedBags: session.rejected_count ?? 0,
+          }));
+        } else {
+          setSessionActive(false);
+          // Show counts from the last completed session, not the all-time DB total
+          fetch(`${API_URL}/sessions/?page=1&page_size=1`)
+            .then(r => r.json())
+            .then(data => {
+              const last = data.items?.[0];
+              setStats(prev => ({
+                ...prev,
+                verifiedBags: last?.total_count ?? 0,
+                rejectedBags: last?.rejected_count ?? 0,
+              }));
+            })
+            .catch(() => {});
+        }
       })
       .catch(() => {});
 
@@ -101,16 +124,38 @@ export default function LiveStream() {
 
     const ws = new WebSocket(WS_URL);
     ws.onmessage = (event) => {
-      const message = JSON.parse(event.data);
-      if (message.type === 'COUNT_EVENT') {
-        const eventData = message.data;
-        setStats(prev => ({
-          ...prev,
-          verifiedBags: eventData.session_stats.total,
-          rejectedBags: eventData.session_stats.rejected,
-          detectedObjects: (prev.detectedObjects + 1),
-        }));
-      }
+      try {
+        const message = JSON.parse(event.data);
+        if (message.type === 'COUNT_EVENT') {
+          setSessionActive(true);
+          setStats(prev => ({
+            ...prev,
+            verifiedBags: message.data.session_stats.total,
+            rejectedBags: message.data.session_stats.rejected,
+            detectedObjects: prev.detectedObjects + 1,
+          }));
+        } else if (message.type === 'SESSION_STOPPED') {
+          // Session just stopped: show the final counts, mark as inactive
+          setSessionActive(false);
+          setStats(prev => ({
+            ...prev,
+            verifiedBags: message.data.total_count ?? prev.verifiedBags,
+            rejectedBags: message.data.rejected_count ?? prev.rejectedBags,
+            activeSessionStart: '-',
+            activeSessionDuration: '-',
+            activeRate: 0,
+          }));
+        } else if (message.type === 'SESSION_STARTED') {
+          // New session: reset counters to zero
+          setSessionActive(true);
+          setStats(prev => ({
+            ...prev,
+            verifiedBags: 0,
+            rejectedBags: 0,
+            detectedObjects: 0,
+          }));
+        }
+      } catch { /* ignore malformed messages */ }
     };
 
     return () => {
@@ -164,6 +209,15 @@ export default function LiveStream() {
               </div>
             )}
 
+            {/* Overlay "Comptage en pause" quand aucune session n'est active */}
+            {!sessionActive && (
+              <div className="absolute inset-0 bg-black/50 backdrop-blur-[2px] flex flex-col items-center justify-center z-10 pointer-events-none">
+                <PauseCircle className="w-14 h-14 text-zinc-400 mb-3 opacity-80" />
+                <p className="text-white font-bold text-lg tracking-wide">Comptage en pause</p>
+                <p className="text-zinc-400 text-sm mt-1">Démarrez une session pour activer le comptage</p>
+              </div>
+            )}
+
             {/* Infos Caméra */}
             <div className="absolute top-4 left-4 flex flex-col gap-2">
               <div className="bg-black/60 backdrop-blur-md border border-white/10 p-2 rounded text-[10px] font-mono">
@@ -191,11 +245,15 @@ export default function LiveStream() {
             <div className="absolute bottom-6 inset-x-6 flex items-end justify-between">
               <div className="flex gap-4">
                 <div className="bg-black/60 backdrop-blur-md border border-green-500/30 p-3 rounded text-white min-w-[100px]">
-                  <div className="text-[10px] text-green-400 font-bold mb-1 uppercase tracking-wider">Vérifiés</div>
+                  <div className="text-[10px] text-green-400 font-bold mb-1 uppercase tracking-wider">
+                    {sessionActive ? 'Vérifiés (session)' : 'Vérifiés (dernière session)'}
+                  </div>
                   <div className="text-2xl font-bold font-mono">{stats.verifiedBags}</div>
                 </div>
                 <div className="bg-black/60 backdrop-blur-md border border-red-500/30 p-3 rounded text-white min-w-[100px]">
-                  <div className="text-[10px] text-red-400 font-bold mb-1 uppercase tracking-wider">Rejetés</div>
+                  <div className="text-[10px] text-red-400 font-bold mb-1 uppercase tracking-wider">
+                    {sessionActive ? 'Rejetés (session)' : 'Rejetés (dernière session)'}
+                  </div>
                   <div className="text-2xl font-bold font-mono">{stats.rejectedBags}</div>
                 </div>
               </div>

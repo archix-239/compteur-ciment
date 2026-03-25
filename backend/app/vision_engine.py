@@ -538,7 +538,11 @@ class VisionEngine:
                     logger.debug("Broadcast frame #%d envoyée (%d subscriber(s))", frames_read, sub_count)
 
             frames_for_inference += 1
-            run_inference = (frames_for_inference % self.inference_every_n_frames) == 0
+            # Only run YOLO when a session is active — no session means no detection, no boxes
+            run_inference = (
+                (frames_for_inference % self.inference_every_n_frames) == 0
+                and bool(self.active_session_id)
+            )
 
             if run_inference:
                 results = self.model.track(
@@ -627,7 +631,12 @@ class VisionEngine:
                                     logger.error("Erreur callback comptage: %s", e)
 
             else:
-                if self.last_annotated_frame is not None:
+                if not self.active_session_id:
+                    # No active session: show raw frame, no detection overlay
+                    annotated_frame = frame.copy()
+                    self.last_annotated_frame = None  # flush stale boxes
+                elif self.last_annotated_frame is not None:
+                    # Inference skipped this frame (throttle), reuse last annotated
                     annotated_frame = self.last_annotated_frame.copy()
                 else:
                     annotated_frame = frame.copy()

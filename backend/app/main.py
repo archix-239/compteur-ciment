@@ -75,6 +75,13 @@ def handle_vision_event(event_data):
         db.add(db_log)
 
         session = db.query(models.Session).filter(models.Session.id == event_data["session_id"]).first()
+        # Guard: ignore race-condition events that arrive after the session was stopped
+        if session and session.status != "active":
+            logger.warning(
+                "handle_vision_event: session %s is already '%s', ignoring late event",
+                event_data["session_id"], session.status,
+            )
+            return
         if session:
             if event_data["status"] == "conforme":
                 session.total_count += 1
@@ -3315,6 +3322,12 @@ async def start_session(db: Session = Depends(get_db)):
     v_engine = vision_engine.get_vision_engine()
     v_engine.set_active_session(session_id)
 
+    # Notify all WebSocket clients so the UI resets immediately
+    asyncio.run_coroutine_threadsafe(
+        manager.broadcast({"type": "SESSION_STARTED", "data": {"session_id": session_id}}),
+        _main_loop,
+    ) if _main_loop else None
+
     return db_session
 
 
@@ -3335,6 +3348,19 @@ async def stop_session(session_id: str, db: Session = Depends(get_db)):
     v_engine = vision_engine.get_vision_engine()
     if v_engine.active_session_id == session_id:
         v_engine.set_active_session(None)
+
+    # Notify all WebSocket clients with final counts so the UI can display them
+    asyncio.run_coroutine_threadsafe(
+        manager.broadcast({
+            "type": "SESSION_STOPPED",
+            "data": {
+                "session_id": session_id,
+                "total_count": db_session.total_count,
+                "rejected_count": db_session.rejected_count,
+            },
+        }),
+        _main_loop,
+    ) if _main_loop else None
 
     return db_session
 

@@ -1,5 +1,5 @@
-import { useState, useEffect, useMemo } from 'react';
-import { API_URL } from '@/lib/api';
+import { useState, useEffect, useRef, useMemo } from 'react';
+import { API_URL, WS_URL } from '@/lib/api';
 import { Clock, Play, Square, History, BarChart2, Search, Trash2, XCircle, Loader2 } from 'lucide-react';
 import { Card } from '@/components/ui/card';
 import { Button } from '@/components/ui/button';
@@ -45,6 +45,7 @@ export default function SessionManagement() {
   const [search, setSearch] = useState('');
   const [statusFilter, setStatusFilter] = useState<StatusFilter>('all');
   const [actionLoading, setActionLoading] = useState<string | null>(null);
+  const wsRef = useRef<WebSocket | null>(null);
 
   // Dialogs
   const [deleteTarget, setDeleteTarget] = useState<SessionItem | null>(null);
@@ -62,6 +63,49 @@ export default function SessionManagement() {
       .catch(err => console.error('Error fetching sessions:', err));
   };
 
+  // WebSocket: listen for SESSION_STARTED / SESSION_STOPPED and COUNT_EVENT
+  useEffect(() => {
+    let reconnectTimer: ReturnType<typeof setTimeout>;
+    const connect = () => {
+      const ws = new WebSocket(WS_URL);
+      wsRef.current = ws;
+
+      ws.onmessage = (e) => {
+        try {
+          const msg = JSON.parse(e.data);
+          if (msg.type === 'SESSION_STOPPED') {
+            // Immediately clear the active session card — no waiting for poll
+            setActiveSession(null);
+            setSessions(prev =>
+              prev.map(s => s.id === msg.data.session_id ? { ...s, status: 'completed' as const } : s)
+            );
+            setActionLoading(null);
+          } else if (msg.type === 'SESSION_STARTED') {
+            // Refresh list to get the new session with id and start_time
+            fetchSessions();
+            setActionLoading(null);
+          } else if (msg.type === 'COUNT_EVENT' && msg.data?.session_stats) {
+            // Keep the active session count in sync in real time
+            setActiveSession(prev =>
+              prev ? { ...prev, total_count: msg.data.session_stats.total, rejected_count: msg.data.session_stats.rejected } : prev
+            );
+          }
+        } catch { /* ignore */ }
+      };
+
+      ws.onclose = () => {
+        reconnectTimer = setTimeout(connect, 3000);
+      };
+    };
+
+    connect();
+    return () => {
+      clearTimeout(reconnectTimer);
+      wsRef.current?.close();
+    };
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
+
   useEffect(() => {
     fetchSessions();
     const timer = setInterval(fetchSessions, 4000);
@@ -69,17 +113,24 @@ export default function SessionManagement() {
   }, []);
 
   const startSession = () => {
+    if (actionLoading) return;
+    setActionLoading('start');
     fetch(`${API_URL}/sessions/start`, { method: 'POST' })
       .then(res => res.json())
       .then(() => fetchSessions())
-      .catch(err => console.error('Error starting session:', err));
+      .catch(err => { console.error('Error starting session:', err); setActionLoading(null); });
   };
 
   const stopSession = (id: string) => {
+    if (actionLoading) return;
+    setActionLoading(id + '-stop');
+    // Optimistic: immediately hide the active card so the user gets instant feedback
+    setActiveSession(null);
     fetch(`${API_URL}/sessions/stop/${id}`, { method: 'POST' })
       .then(res => res.json())
       .then(() => fetchSessions())
-      .catch(err => console.error('Error stopping session:', err));
+      .catch(err => { console.error('Error stopping session:', err); fetchSessions(); })
+      .finally(() => setActionLoading(null));
   };
 
   const confirmDelete = async () => {
@@ -146,8 +197,9 @@ export default function SessionManagement() {
           <Button variant="outline" className="gap-2 border-zinc-800 text-white hover:bg-zinc-900" onClick={fetchSessions}>
             <History className="w-4 h-4" /> Réactualiser
           </Button>
-          <Button className="gap-2 bg-green-600 hover:bg-green-700 text-white font-bold" disabled={!!activeSession} onClick={startSession}>
-            <Play className="w-4 h-4 fill-current" /> Nouvelle Session
+          <Button className="gap-2 bg-green-600 hover:bg-green-700 text-white font-bold" disabled={!!activeSession || actionLoading === 'start'} onClick={startSession}>
+            {actionLoading === 'start' ? <Loader2 className="w-4 h-4 animate-spin" /> : <Play className="w-4 h-4 fill-current" />}
+            {actionLoading === 'start' ? 'Démarrage…' : 'Nouvelle Session'}
           </Button>
         </div>
       </div>
@@ -165,15 +217,26 @@ export default function SessionManagement() {
             </div>
             <div className="pt-4 border-t border-white/20 flex justify-between items-center">
               <div className="text-xs font-mono font-bold tracking-wider">{new Date(activeSession.start_time).toLocaleTimeString()}</div>
-              <Button size="sm" variant="secondary" className="h-7 text-[10px] bg-white text-orange-600 hover:bg-zinc-100 font-bold" onClick={() => stopSession(activeSession.id)}>
-                <Square className="w-3 h-3 mr-1 fill-current" /> ARRÊTER
+              <Button size="sm" variant="secondary" className="h-7 text-[10px] bg-white text-orange-600 hover:bg-zinc-100 font-bold" disabled={!!actionLoading} onClick={() => stopSession(activeSession.id)}>
+                {actionLoading === activeSession.id + '-stop' ? <Loader2 className="w-3 h-3 mr-1 animate-spin" /> : <Square className="w-3 h-3 mr-1 fill-current" />}
+                {actionLoading === activeSession.id + '-stop' ? 'ARRÊT…' : 'ARRÊTER'}
               </Button>
             </div>
           </Card>
         ) : (
-          <Card className="p-6 bg-zinc-900 text-zinc-500 space-y-4 border-dashed border-zinc-800 flex flex-col items-center justify-center">
-            <Square className="w-12 h-12 opacity-20" />
-            <p className="text-sm font-bold uppercase tracking-widest">Aucune Session Active</p>
+          <Card className="p-6 bg-zinc-900 text-zinc-500 space-y-4 border-dashed border-zinc-800 flex flex-col items-center justify-center min-h-[160px]">
+            {actionLoading === 'start' ? (
+              <>
+                <Loader2 className="w-10 h-10 animate-spin text-green-500" />
+                <p className="text-sm font-bold uppercase tracking-widest text-green-400">Démarrage en cours…</p>
+              </>
+            ) : (
+              <>
+                <Square className="w-12 h-12 opacity-20" />
+                <p className="text-sm font-bold uppercase tracking-widest">Aucune Session Active</p>
+                <p className="text-[10px] text-zinc-600 italic">Le comptage est en pause</p>
+              </>
+            )}
           </Card>
         )}
 
