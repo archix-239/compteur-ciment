@@ -4047,7 +4047,7 @@ async def get_template_config(db: Session = Depends(get_db)):
     try:
         for fname in sorted(_os_tmpl.listdir(_TEMPLATES_DIR), reverse=True):
             if fname.lower().endswith((".jpg", ".jpeg", ".png")):
-                fpath = _os_tmpl.join(_TEMPLATES_DIR, fname)
+                fpath = _os_tmpl.path.join(_TEMPLATES_DIR, fname)
                 img = __import__("cv2").imread(fpath)
                 w, h = (img.shape[1], img.shape[0]) if img is not None else (0, 0)
                 history.append({
@@ -4081,7 +4081,7 @@ async def upload_template(file: UploadFile = File(...), db: Session = Depends(ge
     import datetime as _dt_tmpl
     ext      = _os_tmpl.path.splitext(file.filename or "img.jpg")[1].lower() or ".jpg"
     fname    = f"template_{_dt_tmpl.datetime.utcnow().strftime('%Y%m%d_%H%M%S')}{ext}"
-    fpath    = _os_tmpl.join(_TEMPLATES_DIR, fname)
+    fpath    = _os_tmpl.path.join(_TEMPLATES_DIR, fname)
     contents = await file.read()
     with open(fpath, "wb") as f:
         f.write(contents)
@@ -4113,8 +4113,8 @@ async def upload_template(file: UploadFile = File(...), db: Session = Depends(ge
 
 @app.post("/api/config/template/activate/{filename}")
 async def activate_template(filename: str, db: Session = Depends(get_db)):
-    fpath = _os_tmpl.join(_TEMPLATES_DIR, filename)
-    if not _os_tmpl.exists(fpath):
+    fpath = _os_tmpl.path.join(_TEMPLATES_DIR, filename)
+    if not _os_tmpl.path.exists(fpath):
         raise HTTPException(status_code=404, detail="Template introuvable.")
     _set_setting(db, "template_active_file", filename)
     threshold  = float(_get_setting(db, "template_threshold", "0.65"))
@@ -4127,8 +4127,8 @@ async def activate_template(filename: str, db: Session = Depends(get_db)):
 
 @app.delete("/api/config/template/history/{filename}")
 async def delete_template(filename: str, db: Session = Depends(get_db)):
-    fpath = _os_tmpl.join(_TEMPLATES_DIR, filename)
-    if not _os_tmpl.exists(fpath):
+    fpath = _os_tmpl.path.join(_TEMPLATES_DIR, filename)
+    if not _os_tmpl.path.exists(fpath):
         raise HTTPException(status_code=404, detail="Template introuvable.")
     active = _get_setting(db, "template_active_file")
     if filename == active:
@@ -4147,7 +4147,7 @@ async def update_template_settings(body: dict, db: Session = Depends(get_db)):
     db.commit()
     # Re-apply to engine with current template
     active_file = _get_setting(db, "template_active_file")
-    fpath       = _os_tmpl.join(_TEMPLATES_DIR, active_file) if active_file else None
+    fpath       = _os_tmpl.path.join(_TEMPLATES_DIR, active_file) if active_file else None
     threshold   = float(_get_setting(db, "template_threshold", "0.65"))
     color_thr   = float(_get_setting(db, "template_color_threshold", "0.25"))
     color_refs  = _json_tmpl_ep.loads(_get_setting(db, "template_colors", "[]"))
@@ -4174,7 +4174,7 @@ async def add_color_ref(body: dict, db: Session = Depends(get_db)):
     db.commit()
     # Re-apply
     active_file = _get_setting(db, "template_active_file")
-    fpath       = _os_tmpl.join(_TEMPLATES_DIR, active_file) if active_file else None
+    fpath       = _os_tmpl.path.join(_TEMPLATES_DIR, active_file) if active_file else None
     threshold   = float(_get_setting(db, "template_threshold", "0.65"))
     color_thr   = float(_get_setting(db, "template_color_threshold", "0.25"))
     vision_engine.get_vision_engine().apply_template_config(fpath, threshold, refs, color_thr)
@@ -4197,7 +4197,7 @@ async def update_color_ref(idx: int, body: dict, db: Session = Depends(get_db)):
     _set_setting(db, "template_colors", _json_tmpl_ep.dumps(refs))
     db.commit()
     active_file = _get_setting(db, "template_active_file")
-    fpath       = _os_tmpl.join(_TEMPLATES_DIR, active_file) if active_file else None
+    fpath       = _os_tmpl.path.join(_TEMPLATES_DIR, active_file) if active_file else None
     threshold   = float(_get_setting(db, "template_threshold", "0.65"))
     color_thr   = float(_get_setting(db, "template_color_threshold", "0.25"))
     vision_engine.get_vision_engine().apply_template_config(fpath, threshold, refs, color_thr)
@@ -4213,7 +4213,7 @@ async def delete_color_ref(idx: int, db: Session = Depends(get_db)):
     _set_setting(db, "template_colors", _json_tmpl_ep.dumps(refs))
     db.commit()
     active_file = _get_setting(db, "template_active_file")
-    fpath       = _os_tmpl.join(_TEMPLATES_DIR, active_file) if active_file else None
+    fpath       = _os_tmpl.path.join(_TEMPLATES_DIR, active_file) if active_file else None
     threshold   = float(_get_setting(db, "template_threshold", "0.65"))
     color_thr   = float(_get_setting(db, "template_color_threshold", "0.25"))
     vision_engine.get_vision_engine().apply_template_config(fpath, threshold, refs, color_thr)

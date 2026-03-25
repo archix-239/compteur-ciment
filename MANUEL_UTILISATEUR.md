@@ -622,23 +622,187 @@ Pour déployer un nouveau modèle, cliquez sur **Uploader un nouveau modèle .pt
 
 ### 6.4 Template de référence et couleurs
 
-Le template est une image de référence d'un sac conforme. Le système compare chaque sac détecté à ce template.
+Avant de démarrer la première session de production, vous devez calibrer deux éléments : le **template logo** et les **références couleur**. Ces deux éléments travaillent ensemble pour décider si un sac est conforme ou à rejeter.
 
 **Navigation :** Menu → `Configuration` → `Templates & Couleurs`
 
-**Ajouter un template :**
+---
+
+#### Comment le système décide qu'un sac est conforme
+
+Quand un sac franchit la ligne virtuelle, le moteur calcule deux scores en temps réel :
+
+```
+Sac franchit la ligne
+        │
+   ┌────┴────┐
+   ▼         ▼
+Score     Score
+ Logo    Couleur
+  │         │
+  └────┬────┘
+       ▼
+  CONFORME ou REJETÉ
+```
+
+| Configuration active | Décision |
+|---------------------|----------|
+| Aucune (logo ni couleur) | Tous les sacs comptés comme **conformes** |
+| Logo uniquement | Conforme si `score_logo ≥ seuil_logo` |
+| Couleur uniquement | Conforme si `score_couleur ≥ seuil_couleur` |
+| Logo **et** couleur | Conforme si les **deux** seuils sont atteints |
+
+> **Conseil :** Utiliser les deux ensemble offre la meilleure fiabilité. Un sac d'une autre marque de même couleur passe le filtre couleur mais échoue au logo. Un sac Mira-Co très sale passe le filtre logo mais échoue à la couleur.
+
+---
+
+#### Étape 1 — Uploader un template logo
+
+Le template est une photo du logo Mira-Co que le moteur utilise comme référence visuelle. Il compare les formes et textures du logo sur chaque sac à cette image.
+
+**Ce qu'il faut faire :**
+
 1. Cliquez sur **Uploader un template**.
-2. Sélectionnez une photo nette d'un sac conforme (JPEG ou PNG recommandé, fond neutre).
+2. Sélectionnez une photo nette du logo Mira-Co — JPEG ou PNG, prise dans les mêmes conditions que la caméra de production (même angle, même éclairage).
 3. Le template est activé immédiatement.
 
-**Ajuster les seuils :**
-- **Seuil logo** : score minimum de similarité du logo (0–1). En dessous → sac marqué À vérifier.
-- **Seuil couleur** : score minimum de correspondance couleur. Ajustez si les conditions d'éclairage changent en cours de journée.
+**Ce qui fait une bonne photo de référence :**
 
-**Ajouter une référence couleur :**
+| ✅ Bonne référence | ❌ Mauvaise référence |
+|-------------------|----------------------|
+| Logo centré et bien lisible | Logo flou ou partiellement coupé |
+| Éclairage uniforme | Ombres sur le logo |
+| Même angle que la caméra | Vue de face alors que la caméra filme de haut |
+| Fond neutre (convoyeur) | Fond surchargé ou très contrasté |
+
+---
+
+#### Étape 2 — Régler le seuil logo
+
+Le seuil logo définit le score minimum de ressemblance entre le sac et votre template. Il varie de **0.0** (accepte tout) à **1.0** (correspondance parfaite exigée).
+
+**Procédure de calibration :**
+
+1. Démarrez une session test avec quelques sacs Mira-Co conformes et, si possible, un ou deux sacs d'une autre marque.
+2. Consultez le **Journal de Production** — colonne **Logo** — et notez les scores obtenus.
+3. Placez le seuil entre le score le plus bas d'un sac conforme et le score le plus haut d'un sac non conforme.
+
+Exemple concret :
+
+```
+Sac Mira-Co bien éclairé  →  score logo = 0.87
+Sac Mira-Co dans l'ombre  →  score logo = 0.61
+Sac autre marque          →  score logo = 0.21
+Sac Mira-Co abîmé         →  score logo = 0.44
+
+                  ← Sacs rejetés →      ← Sacs conformes →
+score :    0.21         0.44    │ 0.55 │  0.61        0.87
+                                └──────┘
+                            Seuil idéal : 0.55
+```
+
+| Conditions de production | Seuil logo recommandé |
+|-------------------------|----------------------|
+| Éclairage stable, logo impeccable | 0.60 – 0.75 |
+| Éclairage variable ou sacs parfois sales | 0.45 – 0.60 |
+| Conditions difficiles (poussière, contre-jour) | 0.30 – 0.45 |
+
+---
+
+#### Étape 3 — Ajouter une référence couleur
+
+La référence couleur permet de reconnaître les sacs Mira-Co par leur teinte caractéristique. Le moteur calcule la fraction de pixels du sac qui correspondent à cette couleur.
+
+**Trouver la bonne couleur hex :**
+
+1. Ouvrez une capture d'un sac Mira-Co depuis le **Journal de Production** (cliquez sur l'icône œil).
+2. Ouvrez l'image dans un outil comme Paint ou GIMP.
+3. Utilisez la pipette sur la zone la plus représentative du sac — **pas le logo, pas l'ombre, le fond uni**.
+4. Copiez le code hexadécimal obtenu (ex : `#B8A890`).
+
+**Ajouter la référence dans l'interface :**
+
 1. Cliquez sur **Ajouter une couleur**.
-2. Entrez le nom (ex : "Gris standard") et sélectionnez la couleur hexadécimale.
-3. Ajustez la tolérance selon la variabilité observée en production.
+2. Collez le code hex et donnez un nom (ex : "Beige Mira-Co standard").
+3. Réglez la **tolérance** — voir section suivante.
+
+---
+
+#### Étape 4 — Régler la tolérance HSV et le seuil couleur
+
+La tolérance et le seuil sont deux réglages distincts qui agissent en série :
+
+```
+Couleur hex  →  Tolérance  →  Plage HSV acceptée
+                    │
+                    ▼
+            % de pixels dans cette plage  =  score_couleur
+                    │
+              Seuil couleur
+                    │
+            ┌───────┴────────┐
+            ▼                ▼
+        CONFORME           REJETÉ
+```
+
+**La tolérance** élargit ou resserre la plage de teintes acceptables autour de votre couleur de référence.
+
+| Tolérance | Effet | Quand l'utiliser |
+|-----------|-------|-----------------|
+| 5 – 10 | Très stricte — seule la couleur exacte passe | Éclairage LED constant, couleur très distinctive |
+| 15 – 25 | Équilibrée | Conditions industrielles normales |
+| 30 – 40 | Large — accepte les variations de teinte | Éclairage naturel variable, sacs de différents lots |
+
+**Le seuil couleur** définit la fraction minimale de pixels du sac devant correspondre à la plage.
+
+> Pourquoi ne pas viser 100 % ? Un sac réel a un logo, du texte, des ombres et des reflets — même un sac parfaitement conforme n'est jamais entièrement d'une seule couleur. Un seuil entre **0.20 et 0.35** est réaliste pour la plupart des sacs de ciment.
+
+**Procédure pratique :**
+
+1. Commencez avec **tolérance = 30** et **seuil = 0.15**.
+2. Lancez une session test et notez les scores couleur dans le journal.
+3. Ajustez selon ce que vous observez :
+
+| Problème observé | Action |
+|-----------------|--------|
+| Des sacs Mira-Co corrects sont rejetés (score trop bas) | Augmenter la tolérance OU baisser le seuil |
+| Des sacs d'une autre marque passent (score trop haut) | Diminuer la tolérance OU augmenter le seuil |
+| Les scores varient beaucoup selon l'heure | Augmenter la tolérance (problème d'éclairage) |
+| Les scores sont stables mais trop bas | Re-picker la couleur hex depuis une capture récente |
+
+**Exemple de calibration pour un sac beige Mira-Co :**
+
+```
+Couleur hex     : #B8A890
+Tolérance       : 25
+Plage HSV générée (automatique) :
+   Teinte H  : 23 → 47   (beige à sable)
+   Saturation S : 45 → 145 (peu à moyennement saturé)
+   Valeur V  : 130 → 230  (ni trop sombre ni surexposé)
+
+Seuil couleur   : 0.25
+→ 25 % des pixels du sac doivent tomber dans cette plage
+→ Réaliste : le reste est occupé par le logo, les textes, les ombres
+```
+
+---
+
+#### Résumé visuel — Où regarder les scores après calibration
+
+Ouvrez le **Journal de Production** après une session test et consultez les colonnes **Logo** et **Couleur** :
+
+```
+┌────────┬─────────┬────────┬────────┬──────────┐
+│ ID Sac │  Logo   │Couleur │ Statut │  Action  │
+├────────┼─────────┼────────┼────────┼──────────┤
+│ B-501  │  0.82   │  0.71  │ VÉRIFIÉ│   👁     │  ← conforme, scores OK
+│ B-502  │  0.23   │  0.68  │ REJETÉ │   👁     │  ← logo insuffisant
+│ B-503  │  0.79   │  0.11  │ REJETÉ │   👁     │  ← couleur insuffisante
+│ B-504  │  0.18   │  0.09  │ REJETÉ │   👁     │  ← les deux insuffisants
+└────────┴─────────┴────────┴────────┴──────────┘
+```
+
+Si B-501 est un sac Mira-Co conforme et B-504 est clairement un sac étranger, votre calibration est bonne. Si B-502 est aussi un sac Mira-Co correct, baissez le seuil logo ou prenez un meilleur template.
 
 ### 6.5 Gestion des utilisateurs
 
