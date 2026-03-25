@@ -680,7 +680,7 @@ async def export_data(
 
     SOURCE_LABELS = {
         "counts": "Comptages Bruts", "sessions": "Sessions",
-        "anomalies": "Anomalies / Alertes", "quality": "Qualité",
+        "anomalies": "Anomalies-Alertes", "quality": "Qualité",
     }
 
     if source == "counts":
@@ -972,7 +972,7 @@ def _do_scheduled_export(cfg: dict):
 
     SOURCE_LABELS = {
         "counts": "Comptages Bruts", "sessions": "Sessions",
-        "anomalies": "Anomalies / Alertes", "quality": "Qualité",
+        "anomalies": "Anomalies-Alertes", "quality": "Qualité",
     }
 
     db = SessionLocal()
