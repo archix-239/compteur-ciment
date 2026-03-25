@@ -46,6 +46,7 @@ class DetectionLog(Base):
     color_score = Column(Float)
     interval = Column(Float) # seconds since last detection
     capture_url = Column(String) # path to snapshot
+    is_resolved = Column(Boolean, default=False)
     session = relationship("Session", back_populates="logs")
 
 class AlertRule(Base):

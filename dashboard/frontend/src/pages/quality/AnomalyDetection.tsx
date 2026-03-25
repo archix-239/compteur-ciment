@@ -20,6 +20,8 @@ interface Anomaly {
 export default function AnomalyDetection() {
   const [anomalies, setAnomalies] = useState<Anomaly[]>([]);
   const [loading, setLoading] = useState(true);
+  const [resolvingId, setResolvingId] = useState<string | null>(null);
+  const [resolvingAll, setResolvingAll] = useState(false);
   const [page, setPage] = useState(1);
 
   const loadAnomalies = useCallback(async () => {
@@ -33,6 +35,32 @@ export default function AnomalyDetection() {
       setAnomalies([]);
     } finally {
       setLoading(false);
+    }
+  }, []);
+
+  const resolveAnomaly = useCallback(async (anomalyId: string) => {
+    const logId = anomalyId.replace('AN-', '');
+    setResolvingId(anomalyId);
+    try {
+      await fetchApi(`/api/quality/anomalies/${logId}/resolve`, { method: 'PATCH' });
+      setAnomalies(prev => prev.filter(a => a.id !== anomalyId));
+    } catch (err) {
+      console.error('Erreur résolution anomalie:', err);
+    } finally {
+      setResolvingId(null);
+    }
+  }, []);
+
+  const resolveAll = useCallback(async () => {
+    setResolvingAll(true);
+    try {
+      await fetchApi('/api/quality/anomalies/resolve-all', { method: 'POST' });
+      setAnomalies([]);
+      setPage(1);
+    } catch (err) {
+      console.error('Erreur résolution toutes anomalies:', err);
+    } finally {
+      setResolvingAll(false);
     }
   }, []);
 
@@ -55,8 +83,13 @@ export default function AnomalyDetection() {
           <Button variant="outline" className="border-zinc-800 text-white gap-2" onClick={loadAnomalies}>
             {loading ? <Loader2 className="w-4 h-4 animate-spin" /> : <RefreshCcw className="w-4 h-4" />} Actualiser
           </Button>
-          <Button className="bg-orange-600 hover:bg-orange-700 text-white gap-2" disabled>
-            <CheckCircle2 className="w-4 h-4" /> Marquer Tout comme Résolu
+          <Button
+            className="bg-orange-600 hover:bg-orange-700 text-white gap-2"
+            onClick={resolveAll}
+            disabled={resolvingAll || anomalies.length === 0}
+          >
+            {resolvingAll ? <Loader2 className="w-4 h-4 animate-spin" /> : <CheckCircle2 className="w-4 h-4" />}
+            {resolvingAll ? 'En cours…' : 'Marquer Tout comme Résolu'}
           </Button>
         </div>
       </div>
@@ -94,7 +127,15 @@ export default function AnomalyDetection() {
                       </div>
                       <p className="text-sm text-zinc-200">{anomaly.description}</p>
                       <div className="flex items-center justify-end pt-2">
-                        <Button size="sm" variant="outline" className="h-7 text-[10px] border-zinc-800 text-white uppercase font-bold" disabled>Résoudre</Button>
+                        <Button
+                          size="sm"
+                          variant="outline"
+                          className="h-7 text-[10px] border-zinc-800 text-white uppercase font-bold"
+                          onClick={() => resolveAnomaly(anomaly.id)}
+                          disabled={resolvingId === anomaly.id}
+                        >
+                          {resolvingId === anomaly.id ? <Loader2 className="w-3 h-3 animate-spin" /> : 'Résoudre'}
+                        </Button>
                       </div>
                     </div>
                   </div>

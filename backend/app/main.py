@@ -3,7 +3,7 @@ from fastapi.middleware.cors import CORSMiddleware
 from fastapi.security import OAuth2PasswordRequestForm
 from fastapi.staticfiles import StaticFiles
 from sqlalchemy.orm import Session
-from sqlalchemy import func
+from sqlalchemy import func, text
 from contextlib import asynccontextmanager
 from datetime import timedelta, datetime
 import cv2
@@ -27,6 +27,17 @@ logging.basicConfig(
 logger = logging.getLogger("ciment")
 
 models.Base.metadata.create_all(bind=engine)
+
+# ── Auto-migration : add columns added after initial schema creation ──────────
+with engine.connect() as _mig_conn:
+    for _mig_sql in [
+        "ALTER TABLE detection_logs ADD COLUMN is_resolved BOOLEAN DEFAULT 0",
+    ]:
+        try:
+            _mig_conn.execute(text(_mig_sql))
+            _mig_conn.commit()
+        except Exception:
+            pass  # column already exists
 
 
 # ─── WebSocket Manager (events: COUNT_EVENT, etc.) ───────────────────────────
@@ -2787,6 +2798,8 @@ async def get_quality_anomalies(limit: int = 50, db: Session = Depends(get_db)):
         is_reject = l.status == "rejete"
         if not is_low_conf and not is_reject:
             continue
+        if getattr(l, "is_resolved", False):
+            continue
         severity = "high" if (l.detection_score or 0) < 0.5 or is_reject else "medium"
         items.append({
             "id": f"AN-{l.id}",
@@ -2798,6 +2811,31 @@ async def get_quality_anomalies(limit: int = 50, db: Session = Depends(get_db)):
             "status": "pending",
         })
     return {"items": items, "total": len(items)}
+
+
+@app.patch("/api/quality/anomalies/{log_id}/resolve")
+async def resolve_anomaly(log_id: int, db: Session = Depends(get_db)):
+    log = db.query(models.DetectionLog).filter(models.DetectionLog.id == log_id).first()
+    if not log:
+        raise HTTPException(status_code=404, detail="Anomalie introuvable.")
+    log.is_resolved = True
+    db.commit()
+    return {"success": True, "id": log_id}
+
+
+@app.post("/api/quality/anomalies/resolve-all")
+async def resolve_all_anomalies(db: Session = Depends(get_db)):
+    logs = db.query(models.DetectionLog).filter(
+        (models.DetectionLog.status == "rejete") |
+        (models.DetectionLog.detection_score < 0.6)
+    ).all()
+    count = 0
+    for log in logs:
+        if not getattr(log, "is_resolved", False):
+            log.is_resolved = True
+            count += 1
+    db.commit()
+    return {"success": True, "resolved_count": count}
 
 
 @app.patch("/api/logs/{log_id}", response_model=schemas.DetectionLog)
