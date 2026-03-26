@@ -275,15 +275,22 @@ async def lifespan(app: FastAPI):
     try:
         _existing_admin = _db_admin.query(models.User).filter(models.User.username == "admin").first()
         if not _existing_admin:
+            _admin_pwd = os.getenv("DEFAULT_ADMIN_PASSWORD", "")
+            _FORBIDDEN_PASSWORDS = {"admin", "admin1234", "password", "123456", "changeme"}
+            if not _admin_pwd or _admin_pwd in _FORBIDDEN_PASSWORDS:
+                raise RuntimeError(
+                    "DEFAULT_ADMIN_PASSWORD n'est pas defini ou utilise une valeur trop faible. "
+                    "Definissez DEFAULT_ADMIN_PASSWORD dans votre fichier .env avec un mot de passe fort."
+                )
             _db_admin.add(models.User(
-                username="admin",
-                hashed_password=auth.get_password_hash("admin1234"),
+                username=os.getenv("DEFAULT_ADMIN_USERNAME", "admin"),
+                hashed_password=auth.get_password_hash(_admin_pwd),
                 full_name="Administrateur",
                 role="admin",
                 is_active=True,
             ))
             _db_admin.commit()
-            logger.info("Compte admin par défaut créé  →  admin / admin1234")
+            logger.info("Compte admin cree depuis DEFAULT_ADMIN_USERNAME/PASSWORD.")
         else:
             # Ensure the admin role is correct (never downgrade an existing account)
             if _existing_admin.role != "admin":
@@ -291,6 +298,7 @@ async def lifespan(app: FastAPI):
                 _db_admin.commit()
     except Exception as _ae:
         logger.warning("Admin seed failed: %s", _ae)
+        raise
     finally:
         _db_admin.close()
 
