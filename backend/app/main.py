@@ -3472,23 +3472,29 @@ async def activate_model(payload: dict, db: Session = Depends(get_db)):
     return {"activated": model_path, "message": f"Modèle basculé vers {model_path}"}
 
 
+_MODEL_MAX_SIZE_MB = 500
+_TEMPLATE_MAX_SIZE_MB = 10
+
+
 @app.post("/api/models/upload")
 async def upload_model(file: UploadFile = File(...)):
     """Reçoit un fichier .pt et le sauvegarde dans le dossier models/."""
     import os as _os
-    import shutil as _shutil
-    if not file.filename or not file.filename.endswith(".pt"):
+    if not file.filename or not file.filename.lower().endswith(".pt"):
         raise HTTPException(status_code=400, detail="Seuls les fichiers .pt sont acceptés.")
     safe_name = _os.path.basename(file.filename)
     if not safe_name:
         raise HTTPException(status_code=400, detail="Nom de fichier invalide.")
+    contents = await file.read()
+    size_mb = len(contents) / (1024 * 1024)
+    if size_mb > _MODEL_MAX_SIZE_MB:
+        raise HTTPException(status_code=413, detail=f"Fichier trop volumineux ({size_mb:.0f} Mo). Maximum : {_MODEL_MAX_SIZE_MB} Mo.")
     models_dir = "models"
     _os.makedirs(models_dir, exist_ok=True)
     dest = _os.path.join(models_dir, safe_name)
     with open(dest, "wb") as f:
-        _shutil.copyfileobj(file.file, f)
-    size_mb = round(_os.path.getsize(dest) / (1024 * 1024), 1)
-    return {"path": f"models/{safe_name}", "filename": safe_name, "size_mb": size_mb}
+        f.write(contents)
+    return {"path": f"models/{safe_name}", "filename": safe_name, "size_mb": round(size_mb, 1)}
 
 
 @app.delete("/api/models/{filename}")
@@ -4505,13 +4511,19 @@ async def get_template_config(db: Session = Depends(get_db)):
 
 @app.post("/api/config/template/upload")
 async def upload_template(file: UploadFile = File(...), db: Session = Depends(get_db)):
-    if not file.content_type.startswith("image/"):
-        raise HTTPException(status_code=400, detail="Seules les images sont acceptées (JPEG, PNG).")
+    _ALLOWED_IMAGE_EXTS = {".jpg", ".jpeg", ".png", ".bmp"}
     import datetime as _dt_tmpl
-    ext      = _os_tmpl.path.splitext(file.filename or "img.jpg")[1].lower() or ".jpg"
+    ext = _os_tmpl.path.splitext(file.filename or "")[1].lower()
+    if ext not in _ALLOWED_IMAGE_EXTS:
+        raise HTTPException(status_code=400, detail=f"Extension non autorisée. Formats acceptés : {', '.join(_ALLOWED_IMAGE_EXTS)}.")
+    if not (file.content_type or "").startswith("image/"):
+        raise HTTPException(status_code=400, detail="Type MIME invalide. Seules les images sont acceptées.")
+    contents = await file.read()
+    size_mb = len(contents) / (1024 * 1024)
+    if size_mb > _TEMPLATE_MAX_SIZE_MB:
+        raise HTTPException(status_code=413, detail=f"Image trop volumineuse ({size_mb:.1f} Mo). Maximum : {_TEMPLATE_MAX_SIZE_MB} Mo.")
     fname    = f"template_{_dt_tmpl.datetime.utcnow().strftime('%Y%m%d_%H%M%S')}{ext}"
     fpath    = _os_tmpl.path.join(_TEMPLATES_DIR, fname)
-    contents = await file.read()
     with open(fpath, "wb") as f:
         f.write(contents)
 
