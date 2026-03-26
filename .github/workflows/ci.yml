@@ -39,10 +39,10 @@ jobs:
       - name: Install Python dependencies
         run: pip install -r requirements.txt
 
-      - name: Lint with ruff (non-blocking)
+      - name: Lint with ruff
         run: |
           pip install ruff --quiet
-          ruff check app/ tests/ --output-format=github || true
+          ruff check app/ tests/ --output-format=github
 
       - name: Run tests
         env:
@@ -85,7 +85,7 @@ jobs:
         run: pnpm install --frozen-lockfile
 
       - name: Type check
-        run: pnpm exec tsc --noEmit || true
+        run: pnpm exec tsc --noEmit
 
       - name: Build
         env:

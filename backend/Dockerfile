@@ -1,4 +1,4 @@
-FROM python:3.11-slim
+FROM python:3.11.12-slim
 
 # Dépendances système pour OpenCV, pyzbar, tesseract
 RUN apt-get update && apt-get install -y --no-install-recommends \

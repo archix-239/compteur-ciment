@@ -1,5 +1,5 @@
 # ── Étape 1 : Build React ──────────────────────────────────────────────────
-FROM node:20-alpine AS builder
+FROM node:20.19.0-alpine AS builder
 
 # Activer pnpm via corepack
 RUN corepack enable && corepack prepare pnpm@10.4.1 --activate
@@ -19,7 +19,7 @@ ENV VITE_API_URL=$VITE_API_URL
 RUN pnpm exec vite build
 
 # ── Étape 2 : Serve avec Nginx ─────────────────────────────────────────────
-FROM nginx:1.27-alpine
+FROM nginx:1.27.4-alpine
 
 # Config Nginx personnalisée
 COPY nginx.conf /etc/nginx/conf.d/default.conf
