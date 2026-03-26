@@ -3373,7 +3373,7 @@ def _test_camera_sync(config: schemas.CameraConfig) -> dict:
     same_source = v_engine.running and v_engine.video_source == source
     is_webcam_source = isinstance(source, int) or (isinstance(source, str) and source.isdigit())
     if same_source and is_webcam_source:
-        print(f"INFO: Pause du moteur de vision pour test caméra (source webcam: {source})")
+        logger.info("Pause du moteur de vision pour test camera (source webcam: %s)", source)
         engine_was_running = v_engine.stop()
 
     cap = None
@@ -3419,7 +3419,7 @@ def _test_camera_sync(config: schemas.CameraConfig) -> dict:
             cap.release()
         # Restart vision engine if we paused it
         if engine_was_running:
-            print("INFO: Redémarrage du moteur de vision après test caméra")
+            logger.info("Redemarrage du moteur de vision apres test camera.")
             v_engine.start()
 
 

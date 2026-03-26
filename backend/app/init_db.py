@@ -1,6 +1,9 @@
+import logging
 from sqlalchemy.orm import Session
 from .database import SessionLocal, engine
 from . import models, auth
+
+logger = logging.getLogger("ciment.init_db")
 
 def init_db():
     models.Base.metadata.create_all(bind=engine)
@@ -58,4 +61,4 @@ def init_db():
 
 if __name__ == "__main__":
     init_db()
-    print("Base de données initialisée avec succès.")
+    logger.info("Base de donnees initialisee avec succes.")
