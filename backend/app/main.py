@@ -2296,16 +2296,28 @@ async def update_security_settings(payload: dict, db: Session = Depends(get_db))
     return {"ok": True}
 
 
+_SECRET_SETTING_PATTERNS = ("password", "secret", "token", "_key")
+
+
+def _is_sensitive_key(key: str) -> bool:
+    return any(p in key.lower() for p in _SECRET_SETTING_PATTERNS)
+
+
 @app.get("/api/system/export-config")
-async def export_config(db: Session = Depends(get_db)):
-    """Export all system settings + cameras as a downloadable JSON file."""
+async def export_config(
+    current_user: models.User = Depends(auth.get_current_user),
+    db: Session = Depends(get_db),
+):
+    """Export system settings + cameras (admin uniquement, secrets exclus)."""
+    if current_user.role != "admin":
+        raise HTTPException(status_code=403, detail="Réservé aux administrateurs.")
     import json as _j
     rows = db.query(models.SystemSetting).all()
     cameras = db.query(models.Camera).all()
     data = {
         "version": "1.0",
         "exported_at": datetime.utcnow().isoformat(),
-        "settings": {r.key: r.value for r in rows},
+        "settings": {r.key: r.value for r in rows if not _is_sensitive_key(r.key)},
         "cameras": [
             {
                 "name": c.name, "source_type": c.source_type,
@@ -2325,26 +2337,52 @@ async def export_config(db: Session = Depends(get_db)):
 
 
 @app.post("/api/system/import-config")
-async def import_config(payload: dict, db: Session = Depends(get_db)):
-    """Restore system settings from an exported config JSON."""
+async def import_config(
+    payload: dict,
+    current_user: models.User = Depends(auth.get_current_user),
+    db: Session = Depends(get_db),
+):
+    """Restaure les paramètres système depuis un backup JSON (admin uniquement).
+    Les clés sensibles (mots de passe, secrets) sont ignorées à l'import.
+    Seules les clés déjà connues en base sont mises à jour — aucune clé arbitraire.
+    """
+    if current_user.role != "admin":
+        raise HTTPException(status_code=403, detail="Réservé aux administrateurs.")
     settings = payload.get("settings", {})
     if not isinstance(settings, dict):
         raise HTTPException(status_code=400, detail="Format invalide : 'settings' doit être un objet JSON")
+    # Charger uniquement les clés connues existantes
+    existing_keys = {r.key for r in db.query(models.SystemSetting).all()}
     restored = 0
+    skipped_sensitive = 0
+    skipped_unknown = 0
     for key, value in settings.items():
+        if _is_sensitive_key(key):
+            skipped_sensitive += 1
+            continue
+        if key not in existing_keys:
+            skipped_unknown += 1
+            continue
         row = db.query(models.SystemSetting).filter(models.SystemSetting.key == key).first()
         if row:
             row.value = str(value)
-        else:
-            db.add(models.SystemSetting(key=key, value=str(value)))
-        restored += 1
+            restored += 1
     db.commit()
-    return {"ok": True, "restored_keys": restored}
+    return {
+        "ok": True,
+        "restored_keys": restored,
+        "skipped_sensitive": skipped_sensitive,
+        "skipped_unknown": skipped_unknown,
+    }
 
 
 @app.get("/api/system/db-backup")
-async def download_db_backup():
-    """Download the SQLite database file as a binary attachment."""
+async def download_db_backup(
+    current_user: models.User = Depends(auth.get_current_user),
+):
+    """Télécharge la base SQLite (admin uniquement)."""
+    if current_user.role != "admin":
+        raise HTTPException(status_code=403, detail="Réservé aux administrateurs.")
     import os as _os
     from fastapi.responses import FileResponse as _FR
     db_path = _os.path.abspath(
