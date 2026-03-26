@@ -240,21 +240,12 @@ export default function AlertManagement() {
         if (msg.type !== 'ALERT_EVENT') return;
         const { sound_enabled, sound_volume } = settingsRef.current;
         if (sound_enabled) playAlertSound(sound_volume);
-        // Add the new alert to the top of the list
-        const newAlert: AlertItem = {
-          id: msg.data.id ?? Date.now(),
-          rule_id: null,
-          timestamp: new Date().toISOString(),
-          title: msg.data.title ?? 'Alerte',
-          message: msg.data.message ?? '',
-          alert_type: msg.data.alert_type ?? 'warning',
-          is_read: false,
-        };
-        setAlerts(prev => [newAlert, ...prev]);
+        // Reload the full list to avoid duplicate keys (the alert was already persisted to DB)
+        loadAll();
       } catch { /* ignore parse errors */ }
     };
     return () => ws.close();
-  }, []);
+  }, [loadAll]);
 
   // ── Actions: notifications ──────────────────────────────────────────────────
   const markRead = async (id: number) => {
