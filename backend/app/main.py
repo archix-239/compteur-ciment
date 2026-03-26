@@ -2016,6 +2016,11 @@ async def create_manual_alert(payload: schemas.AlertHistoryCreate, db: Session =
         "id": alert.id, "title": alert.title,
         "message": alert.message, "alert_type": alert.alert_type,
     }}))
+    # Notifications externes
+    _intcfg = _get_integration_config(db)
+    await _notify_webhook(_intcfg, alert.title, alert.message, alert.alert_type)
+    await _notify_slack(_intcfg, alert.title, alert.message, alert.alert_type)
+    await _notify_teams(_intcfg, alert.title, alert.message, alert.alert_type)
     return _alert_to_dict(alert)
 
 
@@ -2171,13 +2176,17 @@ async def evaluate_alert_rules(db: Session = Depends(get_db)):
                 is_read=False,
             )
             db.add(alert)
-            triggered.append({"rule": rule.name, "message": message})
+            triggered.append({"rule": rule.name, "message": message, "alert_type": alert_type})
 
     db.commit()
+    _intcfg = _get_integration_config(db) if triggered else None
     for t in triggered:
         await manager.broadcast(json.dumps({"type": "ALERT_EVENT", "data": {
-            "title": t["rule"], "message": t["message"], "alert_type": "critical",
+            "title": t["rule"], "message": t["message"], "alert_type": t["alert_type"],
         }}))
+        await _notify_webhook(_intcfg, t["rule"], t["message"], t["alert_type"])
+        await _notify_slack(_intcfg, t["rule"], t["message"], t["alert_type"])
+        await _notify_teams(_intcfg, t["rule"], t["message"], t["alert_type"])
     return {"triggered": len(triggered), "alerts": triggered}
 
 
@@ -2581,6 +2590,88 @@ async def test_smtp(db: Session = Depends(get_db)):
         raise HTTPException(status_code=502, detail=f"Échec envoi SMTP : {str(e)}")
 
 
+def _get_integration_config(db) -> dict:
+    """Lit les paramètres webhook/slack/teams depuis la DB."""
+    keys = ["webhook_enabled", "webhook_url", "webhook_secret",
+            "slack_enabled", "slack_webhook_url",
+            "teams_enabled", "teams_webhook_url"]
+    rows = db.query(models.SystemSetting).filter(models.SystemSetting.key.in_(keys)).all()
+    s = {r.key: r.value for r in rows}
+    return {
+        "webhook_enabled": s.get("webhook_enabled", "false").lower() == "true",
+        "webhook_url":     s.get("webhook_url", ""),
+        "webhook_secret":  s.get("webhook_secret", ""),
+        "slack_enabled":   s.get("slack_enabled", "false").lower() == "true",
+        "slack_url":       s.get("slack_webhook_url", ""),
+        "teams_enabled":   s.get("teams_enabled", "false").lower() == "true",
+        "teams_url":       s.get("teams_webhook_url", ""),
+    }
+
+
+async def _notify_webhook(cfg: dict, title: str, message: str, alert_type: str):
+    """Envoie une notification webhook si activé."""
+    if not cfg["webhook_enabled"] or not cfg["webhook_url"]:
+        return
+    import httpx as _httpx
+    import datetime as _dt
+    headers = {"Content-Type": "application/json"}
+    if cfg["webhook_secret"]:
+        headers["X-Webhook-Secret"] = cfg["webhook_secret"]
+    payload = {
+        "event": "alert",
+        "source": "CimentMonitorPro",
+        "alert_type": alert_type,
+        "title": title,
+        "message": message,
+        "timestamp": _dt.datetime.utcnow().isoformat() + "Z",
+    }
+    try:
+        async with _httpx.AsyncClient(timeout=5.0) as client:
+            await client.post(cfg["webhook_url"], json=payload, headers=headers)
+    except Exception as _e:
+        logger.warning("Webhook notification failed: %s", _e)
+
+
+async def _notify_slack(cfg: dict, title: str, message: str, alert_type: str):
+    """Envoie un message Slack via Incoming Webhook si activé."""
+    if not cfg["slack_enabled"] or not cfg["slack_url"]:
+        return
+    import httpx as _httpx
+    icon = "🔴" if alert_type == "critical" else "🟡" if alert_type == "warning" else "🔵"
+    text = f"{icon} *{title}*\n>{message}"
+    try:
+        async with _httpx.AsyncClient(timeout=5.0) as client:
+            await client.post(cfg["slack_url"], json={"text": text},
+                              headers={"Content-Type": "application/json"})
+    except Exception as _e:
+        logger.warning("Slack notification failed: %s", _e)
+
+
+async def _notify_teams(cfg: dict, title: str, message: str, alert_type: str):
+    """Envoie une MessageCard Teams via Incoming Webhook si activé."""
+    if not cfg["teams_enabled"] or not cfg["teams_url"]:
+        return
+    import httpx as _httpx
+    color = "FF0000" if alert_type == "critical" else "FFA500" if alert_type == "warning" else "0078D4"
+    card = {
+        "@type": "MessageCard",
+        "@context": "http://schema.org/extensions",
+        "themeColor": color,
+        "summary": title,
+        "sections": [{
+            "activityTitle": f"**{title}**",
+            "activitySubtitle": "CimentMonitor Pro",
+            "text": message,
+        }],
+    }
+    try:
+        async with _httpx.AsyncClient(timeout=5.0) as client:
+            await client.post(cfg["teams_url"], json=card,
+                              headers={"Content-Type": "application/json"})
+    except Exception as _e:
+        logger.warning("Teams notification failed: %s", _e)
+
+
 @app.post("/api/system/test-webhook")
 async def test_webhook(db: Session = Depends(get_db)):
     import httpx as _httpx
@@ -2597,6 +2688,55 @@ async def test_webhook(db: Session = Depends(get_db)):
         async with _httpx.AsyncClient(timeout=5.0) as client:
             r = await client.post(url, json={"event": "test", "source": "CimentMonitorPro"}, headers=headers)
         return {"ok": True, "status_code": r.status_code}
+    except Exception as e:
+        raise HTTPException(status_code=502, detail=f"Échec: {str(e)}")
+
+
+@app.post("/api/system/test-slack")
+async def test_slack(db: Session = Depends(get_db)):
+    import httpx as _httpx
+    rows = db.query(models.SystemSetting).filter(models.SystemSetting.key.in_(["slack_webhook_url"])).all()
+    url = next((r.value for r in rows if r.key == "slack_webhook_url"), "")
+    if not url:
+        raise HTTPException(status_code=400, detail="URL webhook Slack non configurée")
+    try:
+        async with _httpx.AsyncClient(timeout=5.0) as client:
+            r = await client.post(url,
+                json={"text": "✅ *[Test] CimentMonitor Pro*\nLa connexion Slack est opérationnelle."},
+                headers={"Content-Type": "application/json"})
+        if r.status_code == 200:
+            return {"ok": True, "message": "Message de test envoyé sur Slack."}
+        raise HTTPException(status_code=502, detail=f"Slack a répondu HTTP {r.status_code}: {r.text}")
+    except HTTPException:
+        raise
+    except Exception as e:
+        raise HTTPException(status_code=502, detail=f"Échec: {str(e)}")
+
+
+@app.post("/api/system/test-teams")
+async def test_teams(db: Session = Depends(get_db)):
+    import httpx as _httpx
+    rows = db.query(models.SystemSetting).filter(models.SystemSetting.key.in_(["teams_webhook_url"])).all()
+    url = next((r.value for r in rows if r.key == "teams_webhook_url"), "")
+    if not url:
+        raise HTTPException(status_code=400, detail="URL webhook Teams non configurée")
+    card = {
+        "@type": "MessageCard",
+        "@context": "http://schema.org/extensions",
+        "themeColor": "0078D4",
+        "summary": "Test CimentMonitor",
+        "sections": [{"activityTitle": "**[Test] CimentMonitor Pro**",
+                       "activitySubtitle": "Connexion Teams",
+                       "text": "La connexion Microsoft Teams est opérationnelle."}],
+    }
+    try:
+        async with _httpx.AsyncClient(timeout=5.0) as client:
+            r = await client.post(url, json=card, headers={"Content-Type": "application/json"})
+        if r.status_code == 200:
+            return {"ok": True, "message": "Message de test envoyé sur Teams."}
+        raise HTTPException(status_code=502, detail=f"Teams a répondu HTTP {r.status_code}: {r.text}")
+    except HTTPException:
+        raise
     except Exception as e:
         raise HTTPException(status_code=502, detail=f"Échec: {str(e)}")
 

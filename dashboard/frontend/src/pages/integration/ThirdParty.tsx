@@ -493,6 +493,44 @@ export default function ThirdParty() {
                 Créez un webhook entrant depuis votre espace Slack : <span className="text-zinc-500">api.slack.com/apps → Incoming Webhooks</span>
               </p>
             </div>
+            <div className="flex justify-between items-center pt-2 border-t border-zinc-800">
+              <Button
+                variant="outline"
+                className="border-zinc-700 text-zinc-300 gap-2 h-10"
+                disabled={testing === 'slack' || cfg.slack_enabled !== 'true' || !cfg.slack_webhook_url}
+                onClick={async () => {
+                  setTesting('slack');
+                  await fetch(`${API_URL}/api/system/integration-settings`, {
+                    method: 'PUT',
+                    headers: { 'Content-Type': 'application/json', ...authHeader() },
+                    body: JSON.stringify(cfg),
+                  });
+                  try {
+                    const res = await fetch(`${API_URL}/api/system/test-slack`, {
+                      method: 'POST', headers: authHeader(),
+                    });
+                    const d = await res.json();
+                    if (res.ok) showFlash(d.message ?? 'Message de test envoyé sur Slack.');
+                    else showFlash((d as { detail?: string }).detail ?? 'Échec du test Slack.', false);
+                  } catch {
+                    showFlash('Erreur réseau lors du test Slack.', false);
+                  } finally {
+                    setTesting(null);
+                  }
+                }}
+              >
+                {testing === 'slack' ? <Loader2 className="w-4 h-4 animate-spin" /> : <Send className="w-4 h-4" />}
+                Envoyer un test
+              </Button>
+              <Button
+                className="bg-orange-600 hover:bg-orange-700 text-white gap-2 h-10 px-8"
+                onClick={save}
+                disabled={saving}
+              >
+                {saving ? <Loader2 className="w-4 h-4 animate-spin" /> : <Save className="w-4 h-4" />}
+                Enregistrer
+              </Button>
+            </div>
           </Card>
 
           {/* Teams */}
@@ -520,18 +558,45 @@ export default function ThirdParty() {
                 Ajoutez un connecteur "Incoming Webhook" dans le canal Teams souhaité.
               </p>
             </div>
+            <div className="flex justify-between items-center pt-2 border-t border-zinc-800">
+              <Button
+                variant="outline"
+                className="border-zinc-700 text-zinc-300 gap-2 h-10"
+                disabled={testing === 'teams' || cfg.teams_enabled !== 'true' || !cfg.teams_webhook_url}
+                onClick={async () => {
+                  setTesting('teams');
+                  await fetch(`${API_URL}/api/system/integration-settings`, {
+                    method: 'PUT',
+                    headers: { 'Content-Type': 'application/json', ...authHeader() },
+                    body: JSON.stringify(cfg),
+                  });
+                  try {
+                    const res = await fetch(`${API_URL}/api/system/test-teams`, {
+                      method: 'POST', headers: authHeader(),
+                    });
+                    const d = await res.json();
+                    if (res.ok) showFlash(d.message ?? 'Message de test envoyé sur Teams.');
+                    else showFlash((d as { detail?: string }).detail ?? 'Échec du test Teams.', false);
+                  } catch {
+                    showFlash('Erreur réseau lors du test Teams.', false);
+                  } finally {
+                    setTesting(null);
+                  }
+                }}
+              >
+                {testing === 'teams' ? <Loader2 className="w-4 h-4 animate-spin" /> : <Send className="w-4 h-4" />}
+                Envoyer un test
+              </Button>
+              <Button
+                className="bg-orange-600 hover:bg-orange-700 text-white gap-2 h-10 px-8"
+                onClick={save}
+                disabled={saving}
+              >
+                {saving ? <Loader2 className="w-4 h-4 animate-spin" /> : <Save className="w-4 h-4" />}
+                Enregistrer
+              </Button>
+            </div>
           </Card>
-
-          <div className="flex justify-end">
-            <Button
-              className="bg-orange-600 hover:bg-orange-700 text-white gap-2 h-10 px-8"
-              onClick={save}
-              disabled={saving}
-            >
-              {saving ? <Loader2 className="w-4 h-4 animate-spin" /> : <Save className="w-4 h-4" />}
-              Enregistrer
-            </Button>
-          </div>
         </TabsContent>
       </Tabs>
     </div>
