@@ -211,11 +211,16 @@ async def lifespan(app: FastAPI):
             ])
         ).all()}
         _tmpl_file = _ts.get("template_active_file", "")
-        _tmpl_path = f"backend/static/templates/{_tmpl_file}" if _tmpl_file else None
+        _tmpl_dir_startup = os.path.normpath(
+            os.path.join(os.path.dirname(os.path.abspath(__file__)), "..", "static", "templates")
+        )
+        _tmpl_path = os.path.join(_tmpl_dir_startup, _tmpl_file) if _tmpl_file else None
         _threshold  = float(_ts.get("template_threshold", "0.65"))
         _color_thr  = float(_ts.get("template_color_threshold", "0.25"))
         _color_refs = _json_tmpl.loads(_ts.get("template_colors", "[]"))
-        v_engine.get_vision_engine().apply_template_config(_tmpl_path, _threshold, _color_refs, _color_thr)
+        v_engine.apply_template_config(_tmpl_path, _threshold, _color_refs, _color_thr)
+        logger.info("Config template chargée — fichier=%s, seuil=%.2f, %d couleur(s), seuil_couleur=%.2f",
+                    _tmpl_file or "(aucun)", _threshold, len(_color_refs), _color_thr)
     except Exception as _e:
         logger.warning("Template config load failed: %s", _e)
     finally:
@@ -286,14 +291,44 @@ async def lifespan(app: FastAPI):
     finally:
         _db_admin.close()
 
+    # ── Fermer les sessions orphelines laissées ouvertes au run précédent ────
+    _db_sess_clean = SessionLocal()
+    try:
+        from datetime import datetime as _dt_sess
+        _orphans = _db_sess_clean.query(models.Session).filter(models.Session.end_time == None).all()
+        if _orphans:
+            for _s in _orphans:
+                _s.end_time = _dt_sess.utcnow()
+                _s.status = "completed"
+            _db_sess_clean.commit()
+            logger.info("%d session(s) orpheline(s) fermée(s) au démarrage.", len(_orphans))
+    except Exception as _se:
+        logger.warning("Nettoyage sessions orphelines échoué: %s", _se)
+    finally:
+        _db_sess_clean.close()
+
     # ── Start scheduled export background task ────────────────────────────
     global _schedule_task
     _schedule_task = asyncio.create_task(_scheduler_loop())
 
     yield  # ── Application is running ──
 
-    # Shutdown: stop the vision engine cleanly + cancel scheduler
+    # Shutdown: fermer les sessions ouvertes + arrêter moteur + annuler scheduler
     logger.info("Shutdown signal reçu, arrêt du moteur de vision...")
+    _db_sess_stop = SessionLocal()
+    try:
+        from datetime import datetime as _dt_sess_stop
+        _open_sess = _db_sess_stop.query(models.Session).filter(models.Session.end_time == None).all()
+        if _open_sess:
+            for _s in _open_sess:
+                _s.end_time = _dt_sess_stop.utcnow()
+                _s.status = "completed"
+            _db_sess_stop.commit()
+            logger.info("%d session(s) fermée(s) à l'arrêt.", len(_open_sess))
+    except Exception as _se2:
+        logger.warning("Fermeture sessions à l'arrêt échouée: %s", _se2)
+    finally:
+        _db_sess_stop.close()
     v_engine = vision_engine.get_vision_engine()
     v_engine.stop()
     if _schedule_task and not _schedule_task.done():
@@ -4150,7 +4185,9 @@ import json as _json_tmpl_ep
 import colorsys as _colorsys
 import os as _os_tmpl
 
-_TEMPLATES_DIR = "backend/static/templates"
+_TEMPLATES_DIR = _os_tmpl.path.normpath(
+    _os_tmpl.path.join(_os_tmpl.path.dirname(_os_tmpl.path.abspath(__file__)), "..", "static", "templates")
+)
 _os_tmpl.makedirs(_TEMPLATES_DIR, exist_ok=True)
 
 

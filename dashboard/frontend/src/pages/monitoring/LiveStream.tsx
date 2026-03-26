@@ -101,9 +101,11 @@ export default function LiveStream() {
         .then((r) => r.json())
         .then((s) => {
           if (!s) {
+            setSessionActive(false);
             setStats((prev) => ({ ...prev, activeSessionStart: '-', activeSessionDuration: '-', activeRate: 0 }));
             return;
           }
+          setSessionActive(true);
           const start = new Date(s.start_time);
           const diffSec = Math.max(0, Math.floor((Date.now() - start.getTime()) / 1000));
           const hh = String(Math.floor(diffSec / 3600)).padStart(2, '0');
