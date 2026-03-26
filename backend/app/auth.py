@@ -11,14 +11,11 @@ from . import models, schemas, database
 
 logger = logging.getLogger("ciment.auth")
 
-_DEFAULT_SECRET = "industrial_default_secret_774411"
-SECRET_KEY = os.getenv("JWT_SECRET_KEY", _DEFAULT_SECRET)
-
-# Avertissement au démarrage si la clé par défaut est utilisée
-if SECRET_KEY == _DEFAULT_SECRET:
-    logger.warning(
-        "JWT_SECRET_KEY utilise la valeur par défaut non sécurisée. "
-        "Définissez JWT_SECRET_KEY dans votre fichier .env avant de mettre en production !"
+SECRET_KEY = os.getenv("JWT_SECRET_KEY", "")
+if not SECRET_KEY:
+    raise RuntimeError(
+        "JWT_SECRET_KEY n'est pas défini. "
+        "Ajoutez JWT_SECRET_KEY=<clé aléatoire longue> dans votre fichier .env avant de démarrer."
     )
 
 ALGORITHM = os.getenv("JWT_ALGORITHM", "HS256")
