@@ -3,6 +3,7 @@ from slowapi import Limiter, _rate_limit_exceeded_handler
 from slowapi.util import get_remote_address
 from slowapi.errors import RateLimitExceeded
 from fastapi.middleware.cors import CORSMiddleware
+from starlette.middleware.base import BaseHTTPMiddleware
 from fastapi.security import OAuth2PasswordRequestForm
 from fastapi.staticfiles import StaticFiles
 from sqlalchemy.orm import Session
@@ -371,6 +372,52 @@ app.add_middleware(
     allow_methods=["*"],
     allow_headers=["*"],
 )
+
+# ─── Middleware JWT global ────────────────────────────────────────────────────
+# Protège tous les préfixes API sensibles sans modifier chaque endpoint.
+# Les routes listées dans _JWT_EXEMPT sont accessibles sans authentification.
+_JWT_EXEMPT_PATHS = {
+    "/", "/token", "/api/health",
+    "/docs", "/openapi.json", "/redoc",
+}
+_JWT_PROTECTED_PREFIXES = (
+    "/api/reports/", "/api/dashboard/", "/api/logs/",
+    "/api/alerts/", "/api/system/", "/api/analytics/",
+    "/api/quality/", "/api/config/", "/api/models/",
+    "/api/database/", "/api/diagnostics/", "/api/users/",
+    "/sessions/", "/api/sessions/", "/api/timeline/",
+    "/api/cameras/",
+)
+
+
+class JWTAuthMiddleware(BaseHTTPMiddleware):
+    async def dispatch(self, request: Request, call_next):
+        path = request.url.path
+        if path in _JWT_EXEMPT_PATHS or path.startswith("/static") or path.startswith("/ws"):
+            return await call_next(request)
+        if not any(path.startswith(p) for p in _JWT_PROTECTED_PREFIXES):
+            return await call_next(request)
+        auth_header = request.headers.get("Authorization", "")
+        token = auth_header.removeprefix("Bearer ").strip()
+        if not token:
+            return Response(
+                content='{"detail":"Non authentifie. Token manquant."}',
+                status_code=401, media_type="application/json",
+            )
+        try:
+            from jose import jwt as _jose_jwt, JWTError as _JWTError
+            payload = _jose_jwt.decode(token, auth.SECRET_KEY, algorithms=[auth.ALGORITHM])
+            if not payload.get("sub"):
+                raise _JWTError("no sub")
+        except Exception:
+            return Response(
+                content='{"detail":"Token invalide ou expire."}',
+                status_code=401, media_type="application/json",
+            )
+        return await call_next(request)
+
+
+app.add_middleware(JWTAuthMiddleware)
 
 
 # ─── Root ─────────────────────────────────────────────────────────────────────
