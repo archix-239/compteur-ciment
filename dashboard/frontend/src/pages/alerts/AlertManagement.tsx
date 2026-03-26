@@ -8,6 +8,7 @@ import {
   Clock,
   AlertOctagon,
   Mail,
+  Play,
   MessageSquare,
   Zap,
   Trash2,
@@ -58,7 +59,42 @@ import {
   TooltipContent,
   TooltipTrigger,
 } from '@/components/ui/tooltip';
-import { API_URL } from '@/lib/api';
+import { API_URL, WS_URL } from '@/lib/api';
+
+// ── Sound utility (Web Audio API — no external file needed) ──────────────────
+// A single shared AudioContext, created on first user gesture and reused
+// for WebSocket-triggered sounds (browsers block new contexts without gesture).
+let _audioCtx: AudioContext | null = null;
+
+function _doPlayTones(ctx: AudioContext, volumePct: number) {
+  const gain = ctx.createGain();
+  gain.gain.value = volumePct / 100;
+  gain.connect(ctx.destination);
+  const tones = [880, 660];
+  tones.forEach((freq, i) => {
+    const osc = ctx.createOscillator();
+    osc.type = 'sine';
+    osc.frequency.value = freq;
+    osc.connect(gain);
+    osc.start(ctx.currentTime + i * 0.18);
+    osc.stop(ctx.currentTime + i * 0.18 + 0.15);
+  });
+}
+
+function playAlertSound(volumePct: number) {
+  try {
+    if (!_audioCtx) {
+      _audioCtx = new (window.AudioContext || (window as any).webkitAudioContext)();
+    }
+    if (_audioCtx.state === 'suspended') {
+      _audioCtx.resume().then(() => _doPlayTones(_audioCtx!, volumePct));
+    } else {
+      _doPlayTones(_audioCtx, volumePct);
+    }
+  } catch {
+    // Fallback silencieux si le navigateur bloque complètement
+  }
+}
 
 // ── Types ──────────────────────────────────────────────────────────────────────
 
@@ -161,6 +197,8 @@ export default function AlertManagement() {
   const [evaluating, setEvaluating] = useState(false);
   const [statusMsg, setStatusMsg] = useState<{ text: string; ok: boolean } | null>(null);
   const flashTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
+  // Keep a ref to settings so the WS closure always reads the latest value
+  const settingsRef = useRef<AlertSettings>({ sound_enabled: true, sound_volume: 65, email_enabled: true, slack_enabled: false, supervisor_phone: '' });
 
   // ── Flash banner ────────────────────────────────────────────────────────────
   const flash = (text: string, ok = true) => {
@@ -189,6 +227,34 @@ export default function AlertManagement() {
   }, []);
 
   useEffect(() => { loadAll(); }, [loadAll]);
+
+  // Keep settingsRef in sync
+  useEffect(() => { settingsRef.current = settings; }, [settings]);
+
+  // ── WebSocket : écoute ALERT_EVENT → son + ajout dans la liste ──────────────
+  useEffect(() => {
+    const ws = new WebSocket(WS_URL);
+    ws.onmessage = (e) => {
+      try {
+        const msg = JSON.parse(e.data);
+        if (msg.type !== 'ALERT_EVENT') return;
+        const { sound_enabled, sound_volume } = settingsRef.current;
+        if (sound_enabled) playAlertSound(sound_volume);
+        // Add the new alert to the top of the list
+        const newAlert: AlertItem = {
+          id: msg.data.id ?? Date.now(),
+          rule_id: null,
+          timestamp: new Date().toISOString(),
+          title: msg.data.title ?? 'Alerte',
+          message: msg.data.message ?? '',
+          alert_type: msg.data.alert_type ?? 'warning',
+          is_read: false,
+        };
+        setAlerts(prev => [newAlert, ...prev]);
+      } catch { /* ignore parse errors */ }
+    };
+    return () => ws.close();
+  }, []);
 
   // ── Actions: notifications ──────────────────────────────────────────────────
   const markRead = async (id: number) => {
@@ -733,6 +799,17 @@ export default function AlertManagement() {
                   <Volume2 className="w-4 h-4 text-zinc-300 shrink-0" />
                 </div>
               </div>
+
+              {/* Test sound button */}
+              <Button
+                variant="outline"
+                size="sm"
+                className="w-full border-zinc-700 text-zinc-300 hover:text-white gap-2 h-8 text-[10px] font-bold uppercase tracking-widest"
+                disabled={!settings.sound_enabled}
+                onClick={() => playAlertSound(settings.sound_volume)}
+              >
+                <Play className="w-3 h-3" /> Tester le son
+              </Button>
 
               {/* Email / Slack */}
               <div className="pt-4 border-t border-zinc-800 space-y-4">

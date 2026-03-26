@@ -1977,6 +1977,10 @@ async def create_manual_alert(payload: schemas.AlertHistoryCreate, db: Session =
     db.add(alert)
     db.commit()
     db.refresh(alert)
+    await manager.broadcast(json.dumps({"type": "ALERT_EVENT", "data": {
+        "id": alert.id, "title": alert.title,
+        "message": alert.message, "alert_type": alert.alert_type,
+    }}))
     return _alert_to_dict(alert)
 
 
@@ -2135,6 +2139,10 @@ async def evaluate_alert_rules(db: Session = Depends(get_db)):
             triggered.append({"rule": rule.name, "message": message})
 
     db.commit()
+    for t in triggered:
+        await manager.broadcast(json.dumps({"type": "ALERT_EVENT", "data": {
+            "title": t["rule"], "message": t["message"], "alert_type": "critical",
+        }}))
     return {"triggered": len(triggered), "alerts": triggered}
 
 
