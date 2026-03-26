@@ -566,8 +566,8 @@ export default function DataExport() {
                   {/* Time */}
                   <div className="space-y-2">
                     <Label className="text-zinc-500 text-[10px] uppercase font-bold tracking-widest flex items-center">
-                      Heure de déclenchement (UTC)
-                      <InfoTooltip text="Heure à laquelle l'export sera généré automatiquement. Le serveur utilise l'heure UTC." />
+                      Heure de déclenchement
+                      <InfoTooltip text="Heure locale du serveur à laquelle l'export sera généré automatiquement. Configurez l'heure telle qu'elle apparaît sur votre PC." />
                     </Label>
                     <Input
                       type="time"

@@ -608,22 +608,28 @@ async def get_production_report(period: str = "week", db: Session = Depends(get_
 _export_history: list[dict] = []
 
 def _export_period_range(period: str, date_from: str = "", date_to: str = ""):
-    """Return (start_dt, end_dt, period_label) for the requested period string."""
+    """Return (start_dt, end_dt, period_label) for the requested period string.
+
+    Aujourd'hui / Hier use calendar-day boundaries (UTC midnight) so that
+    all bags counted during the day are included regardless of the current time.
+    """
     from datetime import datetime as _dt, timedelta as _td
     now = _dt.utcnow()
+    today_start = now.replace(hour=0, minute=0, second=0, microsecond=0)
     if period == "yesterday":
-        return now - _td(hours=48), now - _td(hours=24), "Hier"
+        yesterday_start = today_start - _td(days=1)
+        return yesterday_start, today_start, "Hier"
     if period == "last-7-days":
-        return now - _td(hours=168), now, "7 Derniers Jours"
+        return today_start - _td(days=7), now, "7 Derniers Jours"
     if period == "last-30-days":
-        return now - _td(hours=720), now, "30 Derniers Jours"
+        return today_start - _td(days=30), now, "30 Derniers Jours"
     if period == "custom" and date_from and date_to:
         try:
             return _dt.fromisoformat(date_from), _dt.fromisoformat(date_to), "Personnalisé"
         except Exception:
             pass
-    # default: today (last 24 h)
-    return now - _td(hours=24), now, "Aujourd'hui"
+    # default: today (midnight → now)
+    return today_start, now, "Aujourd'hui"
 
 
 @app.get("/api/reports/export/preview")
@@ -1151,7 +1157,7 @@ async def _scheduler_loop():
             if not cfg["enabled"]:
                 continue
             from datetime import datetime as _dt
-            now = _dt.utcnow()
+            now = _dt.now()   # heure locale du serveur (pas UTC)
             try:
                 th, tm = map(int, cfg["time"].split(":"))
             except Exception:
