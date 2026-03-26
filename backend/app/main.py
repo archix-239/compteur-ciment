@@ -1,4 +1,7 @@
 from fastapi import FastAPI, Depends, HTTPException, status, Response, WebSocket, WebSocketDisconnect, UploadFile, File, Request
+from slowapi import Limiter, _rate_limit_exceeded_handler
+from slowapi.util import get_remote_address
+from slowapi.errors import RateLimitExceeded
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.security import OAuth2PasswordRequestForm
 from fastapi.staticfiles import StaticFiles
@@ -337,7 +340,10 @@ async def lifespan(app: FastAPI):
     logger.info("Shutdown complet.")
 
 
+limiter = Limiter(key_func=get_remote_address)
 app = FastAPI(title="Cement Bag Counter API", version="1.0.0", lifespan=lifespan)
+app.state.limiter = limiter
+app.add_exception_handler(RateLimitExceeded, _rate_limit_exceeded_handler)
 
 app.mount("/static", StaticFiles(directory="backend/static"), name="static")
 
@@ -3580,6 +3586,7 @@ async def update_line_config(payload: dict, db: Session = Depends(get_db)):
 
 # ─── Auth ─────────────────────────────────────────────────────────────────────
 @app.post("/token", response_model=schemas.Token)
+@limiter.limit("10/minute")
 async def login_for_access_token(request: Request, form_data: OAuth2PasswordRequestForm = Depends(), db: Session = Depends(get_db)):
     import datetime as _dt_auth
     user = db.query(models.User).filter(models.User.username == form_data.username).first()
