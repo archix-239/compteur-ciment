@@ -1,4 +1,4 @@
-from sqlalchemy import Column, Integer, String, Float, DateTime, ForeignKey, Boolean
+from sqlalchemy import Column, Integer, String, Float, DateTime, ForeignKey, Boolean, Index
 from sqlalchemy.orm import relationship
 from .database import Base
 import datetime
@@ -27,19 +27,23 @@ class UserActivity(Base):
 class Session(Base):
     __tablename__ = "sessions"
     id = Column(String, primary_key=True, index=True) # S-YYYYMMDD-XX
-    start_time = Column(DateTime, default=datetime.datetime.utcnow)
+    start_time = Column(DateTime, default=datetime.datetime.utcnow, index=True)
     end_time = Column(DateTime, nullable=True)
     total_count = Column(Integer, default=0)
     rejected_count = Column(Integer, default=0)
-    status = Column(String, default="active") # active, completed
+    status = Column(String, default="active", index=True) # active, completed
     logs = relationship("DetectionLog", back_populates="session")
 
 class DetectionLog(Base):
     __tablename__ = "detection_logs"
+    __table_args__ = (
+        Index("ix_detection_logs_session_timestamp", "session_id", "timestamp"),
+        Index("ix_detection_logs_status_timestamp", "status", "timestamp"),
+    )
     id = Column(Integer, primary_key=True, index=True)
-    session_id = Column(String, ForeignKey("sessions.id"))
-    timestamp = Column(DateTime, default=datetime.datetime.utcnow)
-    status = Column(String) # conforme, rejete
+    session_id = Column(String, ForeignKey("sessions.id"), index=True)
+    timestamp = Column(DateTime, default=datetime.datetime.utcnow, index=True)
+    status = Column(String, index=True) # conforme, rejete
     identifier = Column(String) # UUID or track_id
     detection_score = Column(Float)
     logo_score = Column(Float)
@@ -61,11 +65,11 @@ class AlertHistory(Base):
     __tablename__ = "alert_history"
     id = Column(Integer, primary_key=True, index=True)
     rule_id = Column(Integer, ForeignKey("alert_rules.id"), nullable=True)
-    timestamp = Column(DateTime, default=datetime.datetime.utcnow)
+    timestamp = Column(DateTime, default=datetime.datetime.utcnow, index=True)
     message = Column(String)
     title = Column(String, nullable=True)
     alert_type = Column(String, default="info")   # critical | warning | info
-    is_read = Column(Boolean, default=False)
+    is_read = Column(Boolean, default=False, index=True)
 
 
 class QualityReview(Base):
