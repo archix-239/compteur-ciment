@@ -1107,6 +1107,34 @@ def _do_scheduled_export(cfg: dict):
     })
     if len(_scheduled_exports) > 10:
         _scheduled_exports.pop()
+
+    # ── Envoi par email si configuré ─────────────────────────────────────────
+    email_to = cfg.get("email", "").strip()
+    if email_to:
+        _db_mail = SessionLocal()
+        try:
+            smtp_cfg = _get_smtp_config(_db_mail)
+            if smtp_cfg["host"] and smtp_cfg["user"]:
+                _send_email(
+                    smtp_cfg,
+                    to=email_to,
+                    subject=f"[CimentMonitor] Rapport planifié — {SOURCE_LABELS.get(source, source)} ({period_label})",
+                    body=(
+                        f"Bonjour,\n\n"
+                        f"Veuillez trouver en pièce jointe le rapport planifié :\n"
+                        f"  • Source  : {SOURCE_LABELS.get(source, source)}\n"
+                        f"  • Période : {period_label}\n"
+                        f"  • Lignes  : {len(rows)}\n"
+                        f"  • Taille  : {size_kb} KB\n\n"
+                        f"— CimentMonitor Pro"
+                    ),
+                    attachment_path=str(fpath),
+                )
+        except Exception as _mail_err:
+            logger.warning("Échec envoi email rapport planifié : %s", _mail_err)
+        finally:
+            _db_mail.close()
+
     return fname
 
 
@@ -2431,6 +2459,78 @@ async def update_integration_settings(payload: dict, db: Session = Depends(get_d
             db.add(models.SystemSetting(key=key, value=str(value)))
     db.commit()
     return {"ok": True}
+
+def _get_smtp_config(db) -> dict:
+    """Read SMTP settings from DB and return as dict."""
+    keys = ["smtp_host", "smtp_port", "smtp_user", "smtp_password", "smtp_from"]
+    rows = db.query(models.SystemSetting).filter(models.SystemSetting.key.in_(keys)).all()
+    s = {r.key: r.value for r in rows}
+    return {
+        "host":     s.get("smtp_host", ""),
+        "port":     int(s.get("smtp_port", "587")),
+        "user":     s.get("smtp_user", ""),
+        "password": s.get("smtp_password", ""),
+        "from":     s.get("smtp_from", ""),
+    }
+
+
+def _send_email(smtp_cfg: dict, to: str, subject: str, body: str, attachment_path: str | None = None):
+    """Send an email via SMTP (TLS/STARTTLS). Raises on failure."""
+    import smtplib
+    import ssl as _ssl
+    from email.message import EmailMessage
+    from pathlib import Path as _P
+
+    msg = EmailMessage()
+    msg["Subject"] = subject
+    msg["From"]    = smtp_cfg["from"] or smtp_cfg["user"]
+    msg["To"]      = to
+    msg.set_content(body)
+
+    if attachment_path:
+        p = _P(attachment_path)
+        if p.exists():
+            ctype = "application/octet-stream"
+            if p.suffix == ".csv":   ctype = "text/csv"
+            elif p.suffix == ".xlsx": ctype = "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
+            elif p.suffix == ".pdf":  ctype = "application/pdf"
+            elif p.suffix == ".json": ctype = "application/json"
+            maintype, subtype = ctype.split("/", 1)
+            msg.add_attachment(p.read_bytes(), maintype=maintype, subtype=subtype, filename=p.name)
+
+    ctx = _ssl.create_default_context()
+    with smtplib.SMTP(smtp_cfg["host"], smtp_cfg["port"], timeout=10) as server:
+        server.ehlo()
+        server.starttls(context=ctx)
+        server.login(smtp_cfg["user"], smtp_cfg["password"])
+        server.send_message(msg)
+
+
+@app.post("/api/system/test-smtp")
+async def test_smtp(db: Session = Depends(get_db)):
+    """Send a test email using the configured SMTP settings."""
+    cfg = _get_smtp_config(db)
+    if not cfg["host"]:
+        raise HTTPException(status_code=400, detail="Serveur SMTP non configuré (smtp_host manquant).")
+    if not cfg["user"]:
+        raise HTTPException(status_code=400, detail="Utilisateur SMTP non configuré (smtp_user manquant).")
+    to = cfg["from"] or cfg["user"]
+    try:
+        _send_email(
+            cfg,
+            to=to,
+            subject="[CimentMonitor] Test de connexion SMTP",
+            body=(
+                "Bonjour,\n\n"
+                "Ceci est un email de test envoyé par CimentMonitor Pro.\n"
+                "La configuration SMTP est correctement opérationnelle.\n\n"
+                "— CimentMonitor Pro"
+            ),
+        )
+        return {"ok": True, "message": f"Email de test envoyé à {to}"}
+    except Exception as e:
+        raise HTTPException(status_code=502, detail=f"Échec envoi SMTP : {str(e)}")
+
 
 @app.post("/api/system/test-webhook")
 async def test_webhook(db: Session = Depends(get_db)):

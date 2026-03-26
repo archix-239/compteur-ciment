@@ -2,7 +2,7 @@ import { useCallback, useEffect, useRef, useState } from 'react';
 import {
   Link as LinkIcon, Webhook, Mail, MessageSquare, Loader2,
   Save, CheckCircle2, AlertCircle, RefreshCw, Send, Eye, EyeOff,
-  Globe, Settings,
+  Globe, Settings, Info, BookOpen, ShieldCheck, Calendar,
 } from 'lucide-react';
 import { Card } from '@/components/ui/card';
 import { Button } from '@/components/ui/button';
@@ -10,7 +10,29 @@ import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
 import { Switch } from '@/components/ui/switch';
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs';
+import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from '@/components/ui/tooltip';
 import { API_URL, getToken } from '@/lib/api';
+
+// ── InfoTooltip ────────────────────────────────────────────────────────────────
+function InfoTooltip({ text, side = 'top' }: { text: string; side?: 'top' | 'right' | 'bottom' | 'left' }) {
+  return (
+    <TooltipProvider delayDuration={200}>
+      <Tooltip>
+        <TooltipTrigger asChild>
+          <button
+            type="button"
+            className="inline-flex items-center justify-center w-4 h-4 rounded-full bg-zinc-800 hover:bg-zinc-600 text-zinc-400 hover:text-zinc-100 transition-colors cursor-help ml-1.5 shrink-0"
+          >
+            <span className="text-[9px] font-bold leading-none select-none">?</span>
+          </button>
+        </TooltipTrigger>
+        <TooltipContent side={side} className="max-w-[260px] bg-zinc-900 border border-zinc-700 text-zinc-300 text-xs leading-relaxed whitespace-normal">
+          {text}
+        </TooltipContent>
+      </Tooltip>
+    </TooltipProvider>
+  );
+}
 
 // ── Types ──────────────────────────────────────────────────────────────────────
 
@@ -253,81 +275,130 @@ export default function ThirdParty() {
 
         {/* ── SMTP ── */}
         <TabsContent value="smtp">
-          <Card className="p-6 bg-zinc-900/50 border-zinc-800 space-y-6">
-            <div className="flex items-center gap-2 font-semibold text-white border-b border-zinc-800 pb-4">
-              <Mail className="w-5 h-5 text-orange-500" />
-              <span>Configuration Email SMTP</span>
-            </div>
+          <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">
 
-            <div className="grid grid-cols-1 md:grid-cols-2 gap-5">
-              <div className="space-y-2">
-                <Label className="text-zinc-500 text-[10px] uppercase font-bold tracking-widest">Serveur SMTP</Label>
-                <Input
-                  value={cfg.smtp_host}
-                  onChange={e => set('smtp_host', e.target.value)}
-                  placeholder="smtp.gmail.com"
-                  className="bg-zinc-950 border-zinc-800 text-white h-11 font-mono"
-                />
+            {/* Formulaire SMTP */}
+            <Card className="lg:col-span-2 p-6 bg-zinc-900/50 border-zinc-800 space-y-6">
+              <div className="flex items-center gap-2 font-semibold text-white border-b border-zinc-800 pb-4">
+                <Mail className="w-5 h-5 text-orange-500" />
+                <span>Configuration Email SMTP</span>
               </div>
-              <div className="space-y-2">
-                <Label className="text-zinc-500 text-[10px] uppercase font-bold tracking-widest">Port</Label>
-                <Input
-                  value={cfg.smtp_port}
-                  onChange={e => set('smtp_port', e.target.value)}
-                  placeholder="587"
-                  className="bg-zinc-950 border-zinc-800 text-white h-11 font-mono"
-                  type="number"
-                />
-              </div>
-              <div className="space-y-2">
-                <Label className="text-zinc-500 text-[10px] uppercase font-bold tracking-widest">Utilisateur SMTP</Label>
-                <Input
-                  value={cfg.smtp_user}
-                  onChange={e => set('smtp_user', e.target.value)}
-                  placeholder="noreply@usine.com"
-                  className="bg-zinc-950 border-zinc-800 text-white h-11"
-                />
-              </div>
-              <div className="space-y-2">
-                <Label className="text-zinc-500 text-[10px] uppercase font-bold tracking-widest">Mot de passe SMTP</Label>
-                <div className="relative">
+
+              <div className="grid grid-cols-1 md:grid-cols-2 gap-5">
+                <div className="space-y-2">
+                  <Label className="text-zinc-500 text-[10px] uppercase font-bold tracking-widest flex items-center">
+                    Serveur SMTP
+                    <InfoTooltip side="right" text="Adresse du serveur d'envoi d'emails de votre fournisseur. Gmail : smtp.gmail.com — Outlook : smtp.office365.com — Serveur d'entreprise : selon votre IT." />
+                  </Label>
                   <Input
-                    type={showSmtpPwd ? 'text' : 'password'}
-                    value={cfg.smtp_password}
-                    onChange={e => set('smtp_password', e.target.value)}
-                    placeholder="••••••••"
-                    className="bg-zinc-950 border-zinc-800 text-white h-11 pr-10"
+                    value={cfg.smtp_host}
+                    onChange={e => set('smtp_host', e.target.value)}
+                    placeholder="smtp.gmail.com"
+                    className="bg-zinc-950 border-zinc-800 text-white h-11 font-mono"
                   />
-                  <button
-                    type="button"
-                    onClick={() => setShowSmtpPwd(v => !v)}
-                    className="absolute right-3 top-1/2 -translate-y-1/2 text-zinc-500 hover:text-white transition-colors"
-                  >
-                    {showSmtpPwd ? <EyeOff className="w-4 h-4" /> : <Eye className="w-4 h-4" />}
-                  </button>
+                </div>
+                <div className="space-y-2">
+                  <Label className="text-zinc-500 text-[10px] uppercase font-bold tracking-widest flex items-center">
+                    Port
+                    <InfoTooltip side="right" text="587 = STARTTLS (recommandé). 465 = SSL/TLS. 25 = non chiffré (déconseillé). Gmail impose le port 587." />
+                  </Label>
+                  <Input
+                    value={cfg.smtp_port}
+                    onChange={e => set('smtp_port', e.target.value)}
+                    placeholder="587"
+                    className="bg-zinc-950 border-zinc-800 text-white h-11 font-mono"
+                    type="number"
+                  />
+                </div>
+                <div className="space-y-2">
+                  <Label className="text-zinc-500 text-[10px] uppercase font-bold tracking-widest flex items-center">
+                    Utilisateur SMTP
+                    <InfoTooltip side="right" text="Pour Gmail : votre adresse Gmail complète (ex : moncompte@gmail.com). C'est aussi l'adresse qui sera utilisée pour l'authentification." />
+                  </Label>
+                  <Input
+                    value={cfg.smtp_user}
+                    onChange={e => set('smtp_user', e.target.value)}
+                    placeholder="noreply@usine.com"
+                    className="bg-zinc-950 border-zinc-800 text-white h-11"
+                  />
+                </div>
+                <div className="space-y-2">
+                  <Label className="text-zinc-500 text-[10px] uppercase font-bold tracking-widest flex items-center">
+                    Mot de passe SMTP
+                    <InfoTooltip side="right" text="Pour Gmail : NE PAS utiliser votre mot de passe habituel. Utilisez un mot de passe d'application généré dans Mon compte Google → Sécurité → Mots de passe des applications (code 16 caractères)." />
+                  </Label>
+                  <div className="relative">
+                    <Input
+                      type={showSmtpPwd ? 'text' : 'password'}
+                      value={cfg.smtp_password}
+                      onChange={e => set('smtp_password', e.target.value)}
+                      placeholder="••••••••"
+                      className="bg-zinc-950 border-zinc-800 text-white h-11 pr-10"
+                    />
+                    <button
+                      type="button"
+                      onClick={() => setShowSmtpPwd(v => !v)}
+                      className="absolute right-3 top-1/2 -translate-y-1/2 text-zinc-500 hover:text-white transition-colors"
+                    >
+                      {showSmtpPwd ? <EyeOff className="w-4 h-4" /> : <Eye className="w-4 h-4" />}
+                    </button>
+                  </div>
+                </div>
+                <div className="md:col-span-2 space-y-2">
+                  <Label className="text-zinc-500 text-[10px] uppercase font-bold tracking-widest flex items-center">
+                    Adresse d'Envoi (From)
+                    <InfoTooltip side="right" text="Adresse qui apparaît comme expéditeur dans les emails reçus. Pour Gmail elle doit être identique à l'utilisateur SMTP. Peut inclure un nom d'affichage : Ciment Monitor <moncompte@gmail.com>." />
+                  </Label>
+                  <Input
+                    value={cfg.smtp_from}
+                    onChange={e => set('smtp_from', e.target.value)}
+                    placeholder="Ciment Monitor <noreply@usine.com>"
+                    className="bg-zinc-950 border-zinc-800 text-white h-11"
+                  />
                 </div>
               </div>
-              <div className="md:col-span-2 space-y-2">
-                <Label className="text-zinc-500 text-[10px] uppercase font-bold tracking-widest">Adresse d'Envoi (From)</Label>
-                <Input
-                  value={cfg.smtp_from}
-                  onChange={e => set('smtp_from', e.target.value)}
-                  placeholder="Ciment Monitor <noreply@usine.com>"
-                  className="bg-zinc-950 border-zinc-800 text-white h-11"
-                />
+
+              <div className="p-4 rounded-lg bg-zinc-950/60 border border-zinc-800 text-[10px] text-zinc-500 space-y-1">
+                <p className="font-bold text-zinc-400 uppercase tracking-widest flex items-center gap-1.5">
+                  <Info className="w-3 h-3" /> Utilisé pour :
+                </p>
+                <ul className="list-disc list-inside space-y-0.5 mt-1">
+                  <li>Alertes critiques de production</li>
+                  <li>Rapports planifiés automatiques (configurables dans Rapports → Export de Données)</li>
+                  <li>Notifications d'anomalie qualité</li>
+                </ul>
               </div>
-            </div>
 
-            <div className="p-4 rounded-lg bg-zinc-950/60 border border-zinc-800 text-[10px] text-zinc-500 space-y-1">
-              <p className="font-bold text-zinc-400 uppercase tracking-widest">Utilisé pour :</p>
-              <ul className="list-disc list-inside space-y-0.5">
-                <li>Alertes critiques de production</li>
-                <li>Rapports hebdomadaires automatiques (si activé dans Paramètres Système)</li>
-                <li>Notifications d'anomalie</li>
-              </ul>
-            </div>
-
-            <div className="flex justify-end pt-2 border-t border-zinc-800">
+              <div className="flex justify-between items-center pt-2 border-t border-zinc-800">
+              <Button
+                variant="outline"
+                className="border-zinc-700 text-zinc-300 gap-2 h-10"
+                disabled={testing === 'smtp' || !cfg.smtp_host}
+                onClick={async () => {
+                  setTesting('smtp');
+                  // Save first so backend uses latest config
+                  await fetch(`${API_URL}/api/system/integration-settings`, {
+                    method: 'PUT',
+                    headers: { 'Content-Type': 'application/json', ...authHeader() },
+                    body: JSON.stringify(cfg),
+                  });
+                  try {
+                    const res = await fetch(`${API_URL}/api/system/test-smtp`, {
+                      method: 'POST', headers: authHeader(),
+                    });
+                    const d = await res.json();
+                    if (res.ok) showFlash(d.message ?? 'Email de test envoyé.');
+                    else showFlash((d as { detail?: string }).detail ?? 'Échec du test SMTP.', false);
+                  } catch {
+                    showFlash('Erreur réseau lors du test SMTP.', false);
+                  } finally {
+                    setTesting(null);
+                  }
+                }}
+              >
+                {testing === 'smtp' ? <Loader2 className="w-4 h-4 animate-spin" /> : <Send className="w-4 h-4" />}
+                Tester la connexion
+              </Button>
               <Button
                 className="bg-orange-600 hover:bg-orange-700 text-white gap-2 h-10 px-8"
                 onClick={save}
@@ -338,6 +409,61 @@ export default function ThirdParty() {
               </Button>
             </div>
           </Card>
+
+            {/* Guide de configuration */}
+            <div className="space-y-4">
+
+              {/* Guide Gmail */}
+              <Card className="p-5 bg-zinc-900/50 border-zinc-800 space-y-4">
+                <div className="flex items-center gap-2 font-semibold text-white border-b border-zinc-800 pb-3">
+                  <BookOpen className="w-4 h-4 text-orange-500" />
+                  <span className="text-sm">Guide Gmail</span>
+                </div>
+                <ol className="space-y-2.5 text-xs text-zinc-400 list-decimal list-inside">
+                  <li>Connectez-vous à <span className="text-orange-400 font-mono text-[11px]">myaccount.google.com</span></li>
+                  <li>Allez dans <span className="text-white">Sécurité</span> → activez la <span className="text-white">Vérification en 2 étapes</span></li>
+                  <li>Cherchez <span className="text-white">Mots de passe des applications</span></li>
+                  <li>Créez un mot de passe → application : <span className="text-white">Autre</span> → nom : <span className="text-white">CimentMonitor</span></li>
+                  <li>Copiez le <span className="text-white">code 16 caractères</span> dans le champ mot de passe</li>
+                </ol>
+                <div className="p-3 bg-zinc-950 rounded-lg space-y-1 text-[11px] font-mono border border-zinc-800">
+                  <p className="text-zinc-500 uppercase text-[9px] tracking-widest mb-2">Valeurs Gmail</p>
+                  <p><span className="text-zinc-500">Serveur :</span> <span className="text-orange-400">smtp.gmail.com</span></p>
+                  <p><span className="text-zinc-500">Port    :</span> <span className="text-orange-400">587</span></p>
+                  <p><span className="text-zinc-500">Sécurité:</span> <span className="text-orange-400">STARTTLS</span></p>
+                </div>
+              </Card>
+
+              {/* Sécurité */}
+              <Card className="p-5 bg-zinc-900/50 border-zinc-800 space-y-3">
+                <div className="flex items-center gap-2 font-semibold text-white border-b border-zinc-800 pb-3">
+                  <ShieldCheck className="w-4 h-4 text-green-500" />
+                  <span className="text-sm">Sécurité</span>
+                </div>
+                <ul className="space-y-2 text-[11px] text-zinc-400">
+                  <li className="flex items-start gap-2"><span className="text-green-500 mt-0.5">✓</span> Le mot de passe d'application ne donne accès qu'à l'envoi d'emails, pas à votre compte Google</li>
+                  <li className="flex items-start gap-2"><span className="text-green-500 mt-0.5">✓</span> Connexion chiffrée via STARTTLS (port 587)</li>
+                  <li className="flex items-start gap-2"><span className="text-orange-400 mt-0.5">!</span> Révocable à tout moment depuis Mon compte Google → Sécurité</li>
+                </ul>
+              </Card>
+
+              {/* Utilisation */}
+              <Card className="p-5 bg-zinc-900/50 border-zinc-800 space-y-3">
+                <div className="flex items-center gap-2 font-semibold text-white border-b border-zinc-800 pb-3">
+                  <Calendar className="w-4 h-4 text-blue-400" />
+                  <span className="text-sm">Rapports planifiés</span>
+                </div>
+                <p className="text-[11px] text-zinc-400">
+                  Une fois le SMTP configuré, activez l'envoi automatique dans :<br />
+                  <span className="text-orange-400">Rapports → Export de Données → Planification</span>
+                </p>
+                <p className="text-[11px] text-zinc-400">
+                  Le fichier (CSV / Excel / PDF) sera envoyé en pièce jointe à l'adresse de destination configurée dans la planification.
+                </p>
+              </Card>
+
+            </div>
+          </div>
         </TabsContent>
 
         {/* ── Slack / Teams ── */}
