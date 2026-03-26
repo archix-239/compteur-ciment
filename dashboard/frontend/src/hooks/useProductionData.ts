@@ -95,30 +95,42 @@ export function useProductionData() {
     return () => clearInterval(timer);
   }, [loadData]);
 
-  // ── WebSocket — mise à jour en temps réel ──────────────────────────────────
+  // ── WebSocket — mise à jour en temps réel (avec reconnexion automatique) ────
 
   useEffect(() => {
-    const ws = new WebSocket(WS_URL);
+    let ws: WebSocket;
+    let reconnectTimer: ReturnType<typeof setTimeout>;
+    let destroyed = false;
 
-    ws.onmessage = (event) => {
-      try {
-        const message = JSON.parse(event.data as string);
-        if (message.type === 'COUNT_EVENT') {
-          // Mise à jour immédiate du compteur depuis l'événement WS
-          const total = message.data?.session_stats?.total;
-          if (typeof total === 'number') {
-            setMetrics((prev) => ({ ...prev, totalBags: total }));
+    const connect = () => {
+      if (destroyed) return;
+      ws = new WebSocket(WS_URL);
+
+      ws.onmessage = (event) => {
+        try {
+          const message = JSON.parse(event.data as string);
+          if (message.type === 'COUNT_EVENT') {
+            const total = message.data?.session_stats?.total;
+            if (typeof total === 'number') {
+              setMetrics((prev) => ({ ...prev, totalBags: total }));
+            }
+            loadData();
           }
-          // Rechargement complet des analytics (intervalles, heatmap, gaps)
-          loadData();
-        }
-      } catch { /* ignore */ }
+        } catch { /* ignore */ }
+      };
+
+      ws.onclose = () => {
+        if (!destroyed) reconnectTimer = setTimeout(connect, 3000);
+      };
+      ws.onerror = () => { ws.close(); };
     };
 
-    ws.onerror = () => {};
-    ws.onclose = () => {};
-
-    return () => ws.close();
+    connect();
+    return () => {
+      destroyed = true;
+      clearTimeout(reconnectTimer);
+      ws?.close();
+    };
   }, [loadData]);
 
   // ── Réinitialisation ───────────────────────────────────────────────────────

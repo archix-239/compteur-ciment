@@ -125,44 +125,50 @@ export default function LiveStream() {
     loadSession();
     const sessionTimer = setInterval(loadSession, 1000);
 
-    const ws = new WebSocket(WS_URL);
-    ws.onmessage = (event) => {
-      try {
-        const message = JSON.parse(event.data);
-        if (message.type === 'COUNT_EVENT') {
-          setSessionActive(true);
-          setStats(prev => ({
-            ...prev,
-            verifiedBags: message.data.session_stats.total,
-            rejectedBags: message.data.session_stats.rejected,
-            detectedObjects: prev.detectedObjects + 1,
-          }));
-        } else if (message.type === 'SESSION_STOPPED') {
-          // Session just stopped: show the final counts, mark as inactive
-          setSessionActive(false);
-          setStats(prev => ({
-            ...prev,
-            verifiedBags: message.data.total_count ?? prev.verifiedBags,
-            rejectedBags: message.data.rejected_count ?? prev.rejectedBags,
-            activeSessionStart: '-',
-            activeSessionDuration: '-',
-            activeRate: 0,
-          }));
-        } else if (message.type === 'SESSION_STARTED') {
-          // New session: reset counters to zero
-          setSessionActive(true);
-          setStats(prev => ({
-            ...prev,
-            verifiedBags: 0,
-            rejectedBags: 0,
-            detectedObjects: 0,
-          }));
-        }
-      } catch { /* ignore malformed messages */ }
+    let ws: WebSocket;
+    let wsReconnectTimer: ReturnType<typeof setTimeout>;
+    let wsDestroyed = false;
+
+    const connectWs = () => {
+      if (wsDestroyed) return;
+      ws = new WebSocket(WS_URL);
+      ws.onmessage = (event) => {
+        try {
+          const message = JSON.parse(event.data);
+          if (message.type === 'COUNT_EVENT') {
+            setSessionActive(true);
+            setStats(prev => ({
+              ...prev,
+              verifiedBags: message.data.session_stats.total,
+              rejectedBags: message.data.session_stats.rejected,
+              detectedObjects: prev.detectedObjects + 1,
+            }));
+          } else if (message.type === 'SESSION_STOPPED') {
+            setSessionActive(false);
+            setStats(prev => ({
+              ...prev,
+              verifiedBags: message.data.total_count ?? prev.verifiedBags,
+              rejectedBags: message.data.rejected_count ?? prev.rejectedBags,
+              activeSessionStart: '-',
+              activeSessionDuration: '-',
+              activeRate: 0,
+            }));
+          } else if (message.type === 'SESSION_STARTED') {
+            setSessionActive(true);
+            setStats(prev => ({ ...prev, verifiedBags: 0, rejectedBags: 0, detectedObjects: 0 }));
+          }
+        } catch { /* ignore malformed messages */ }
+      };
+      ws.onclose = () => { if (!wsDestroyed) wsReconnectTimer = setTimeout(connectWs, 3000); };
+      ws.onerror = () => { ws.close(); };
     };
 
+    connectWs();
+
     return () => {
-      ws.close();
+      wsDestroyed = true;
+      clearTimeout(wsReconnectTimer);
+      ws?.close();
       clearInterval(runtimeTimer);
       clearInterval(sessionTimer);
       clearInterval(alertsTimer);
