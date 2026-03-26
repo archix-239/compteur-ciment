@@ -46,10 +46,10 @@ jobs:
 
       - name: Run tests
         env:
-          DATABASE_URL: sqlite:///:memory:
-          JWT_SECRET_KEY: ci_test_secret_key_at_least_32_chars_long
-          ALLOWED_ORIGINS: http://localhost:3000
-          PYTHONPATH: ${{ github.workspace }}/backend
+          DATABASE_URL: "sqlite:///:memory:"
+          JWT_SECRET_KEY: "ci_test_secret_key_at_least_32_chars_long"
+          ALLOWED_ORIGINS: "http://localhost:3000"
+          PYTHONPATH: "${{ github.workspace }}/backend"
         run: |
           pytest tests/ -v --tb=short --junitxml=test-results.xml
 
