@@ -1,513 +1,494 @@
-# Compteur Automatique de Sacs de Ciment - Industrial Edition
+# Compteur Automatique de Sacs de Ciment
 
-Ce projet est une solution complète de vision par ordinateur industrielle pour le comptage automatique de sacs de ciment. Il intègre un moteur de détection YOLOv8, un backend FastAPI robuste et un dashboard React moderne suivant les standards "Industrial Dark Mode".
-
-## 🚀 Fonctionnalités Clés
-
-- **Vision IA en Direct** : Détection et suivi en temps réel via YOLOv8 avec overlay de détection.
-- **Tableau de Bord Industriel** : Interface React 19 hautement performante avec monitoring OEE et métriques de production.
-- **Gestion des Sessions** : Pilotage manuel des sessions de production (Démarrer/Arrêter).
-- **Journal de Production** : Historique détaillé de chaque sac avec capture d'image associée.
-- **Qualité & Anomalies** : Détection des non-conformités et interface de vérification manuelle.
-- **Communication Temps Réel** : Intégration WebSockets pour une réactivité instantanée entre la vision et l'interface.
-- **Persistance des Données** : Base de données SQLite avec ORM SQLAlchemy.
-
-## 🏗️ Architecture du Projet
-
-- **Frontend** : React 19, TypeScript, Vite, Tailwind CSS 4, Radix UI, Recharts.
-- **Backend** : FastAPI (Python), SQLAlchemy, WebSockets, MJPEG Streaming.
-- **Vision** : OpenCV, YOLOv8 (Ultralytics), Pyzbar (QR Code).
-- **Base de Données** : SQLite (migrable vers PostgreSQL).
+[![CI — Backend Tests](https://github.com/archix-239/compteur-ciment/actions/workflows/ci.yml/badge.svg)](https://github.com/archix-239/compteur-ciment/actions/workflows/ci.yml)
+[![Docker](https://img.shields.io/badge/Docker-Compose-2496ED?logo=docker&logoColor=white)](https://hub.docker.com/)
+[![Python](https://img.shields.io/badge/Python-3.11-3776AB?logo=python&logoColor=white)](https://www.python.org/)
+[![React](https://img.shields.io/badge/React-19-61DAFB?logo=react&logoColor=black)](https://react.dev/)
+[![YOLOv8](https://img.shields.io/badge/YOLOv8-Ultralytics-FF6B35)](https://ultralytics.com/)
+[![FastAPI](https://img.shields.io/badge/FastAPI-0.11x-009688?logo=fastapi&logoColor=white)](https://fastapi.tiangolo.com/)
+[![Licence MIT](https://img.shields.io/badge/Licence-MIT-green)](./LICENSE)
 
 ---
 
-## 🛠️ Installation et Développement Local
+> **1 100 sacs par heure. Zéro erreur de comptage. Un seul écran.**
+>
+> Sur une ligne de production cimentière, chaque sac compte — au sens propre comme au sens financier. Une erreur de comptage de 1 % sur un poste de 8 heures représente 88 sacs non tracés. Ce projet met fin à ce problème en remplaçant le comptage humain par un moteur de vision artificielle YOLOv8, un backend industriel FastAPI et un dashboard React temps réel, le tout déployable en 5 minutes avec Docker.
 
-### 1. Prérequis
+---
 
-**Serveur / Machine de développement**
-- Python 3.10+ (`python --version`)
-- Node.js 18+ & pnpm (`node --version`)
-- CPU 4 cœurs minimum, 8 Go RAM recommandé
-- Caméra USB ou flux RTSP (par défaut, webcam index 0)
+## Table des matières
 
-**Poste utilisateur (navigateur)**
-- Chrome 90+, Edge 90+ ou Firefox 88+
-- Résolution d'écran 1 280 × 720 minimum
-- Connexion réseau 5 Mbps minimum (20 Mbps pour le flux vidéo)
+1. [Fonctionnalités](#1-fonctionnalités)
+2. [Architecture](#2-architecture)
+3. [Prérequis](#3-prérequis)
+4. [Installation rapide — Docker (5 min)](#4-installation-rapide--docker-5-min)
+5. [Installation développement](#5-installation-développement)
+6. [Configuration (.env)](#6-configuration-env)
+7. [Utilisation](#7-utilisation)
+8. [Structure du projet](#8-structure-du-projet)
+9. [Tests](#9-tests)
+10. [CI/CD](#10-cicd)
+11. [Documentation](#11-documentation)
+12. [Contribution](#12-contribution)
+13. [Licence](#13-licence)
 
-> **Configuration complète :** Voir la section [Configuration Requise](./MANUEL_UTILISATEUR.md#2-configuration-requise) du manuel utilisateur pour les détails matériels, les spécifications caméra et les prérequis postes clients.
+---
 
-### 2. Installation du Backend (Python)
+## 1. Fonctionnalités
+
+### Vision et comptage
+
+| Fonctionnalité | Détail |
+|---|---|
+| Détection temps réel | YOLOv8 analyse chaque frame de la caméra |
+| Ligne virtuelle de comptage | Franchissement configurable par drag-and-drop |
+| Contrôle qualité automatique | Vérification logo, couleur et score de confiance |
+| Multi-caméras | USB, RTSP (IP cam), HTTP (flux MJPEG) |
+| Flux vidéo live | Streaming MJPEG + overlay de détection |
+
+### Production et qualité
+
+- **Sessions de production** — démarrage, pause et clôture depuis le dashboard
+- **Journal par sac** — chaque détection horodatée avec capture d'image associée
+- **Alertes configurables** — cadence anormale, taux de rejet, perte de signal caméra
+- **Rapports et exports** — CSV, Excel, PDF, JSON à la demande ou planifiés
+
+### Plateforme
+
+- **Dashboard WebSocket** — métriques OEE rafraîchies sans rechargement de page
+- **RBAC complet** — Admin, Opérateur, Viewer + rôles personnalisés
+- **API REST documentée** — 121 routes, authentification JWT et clés API
+- **Intégrations** — SMTP, Slack, MS Teams, webhooks génériques
+- **Backup / archive** — sauvegarde planifiable de la base de données SQLite
+
+---
+
+## 2. Architecture
+
+```
+                    ┌─────────────────────────────────────────────┐
+                    │              Docker Compose                  │
+                    │                                             │
+  Navigateur  ───▶  │  Nginx  :80                                 │
+                    │    ├── /api/*  ──────▶  FastAPI  :8000      │
+                    │    └── /       ──────▶  React (static)      │
+                    │                                             │
+                    │  FastAPI  :8000                             │
+                    │    ├── SQLite  (/data/*.db)                  │
+                    │    ├── YOLOv8 Engine  (thread dédié)        │
+                    │    └── WebSocket broadcast                   │
+                    └─────────────────────────────────────────────┘
+                                        │
+                    ┌───────────────────▼──────────────────────┐
+                    │            Caméra source                  │
+                    │   USB  /  RTSP (IP)  /  HTTP (MJPEG)     │
+                    └──────────────────────────────────────────┘
+```
+
+**Flux de données résumé :**
+
+```
+Caméra ──▶ OpenCV capture ──▶ YOLOv8 inférence
+    ──▶ Franchissement ligne virtuelle
+    ──▶ SQLite (bag_detections)
+    ──▶ WebSocket ──▶ React Dashboard (mise à jour instantanée)
+```
+
+### Pile technologique
+
+| Couche | Technologies |
+|---|---|
+| Frontend | React 19, TypeScript, Vite, Tailwind CSS 4, Radix UI, Recharts, Wouter |
+| Backend | Python 3.11, FastAPI, SQLAlchemy, Pydantic, slowapi, bcrypt, JWT |
+| Vision | OpenCV, YOLOv8 (ultralytics), ORB matching, analyse colorimétrique, pyzbar, pytesseract |
+| Base de données | SQLite (migrable PostgreSQL), 11 tables |
+| Déploiement | Docker, Docker Compose, Nginx |
+| Tests | pytest (52 tests backend), TypeScript tsc + Vite build (frontend) |
+| CI/CD | GitHub Actions |
+
+---
+
+## 3. Prérequis
+
+### Matériel minimum
+
+| Ressource | Minimum | Recommandé |
+|---|---|---|
+| CPU | 4 cœurs | 6 cœurs |
+| RAM | 4 Go | 8 Go |
+| GPU | — | NVIDIA (CUDA) |
+| Stockage | 10 Go | 50 Go |
+| Caméra | USB, RTSP ou HTTP | — |
+
+### Logiciels
+
+**Déploiement via Docker (recommandé) :**
+
+- [Docker Engine](https://docs.docker.com/engine/install/) 24+
+- [Docker Compose](https://docs.docker.com/compose/) v2+
+
+**Développement local (optionnel) :**
+
+- Python 3.11
+- Node.js 20 + pnpm
+- Tesseract OCR (pour pytesseract)
+
+### Systèmes d'exploitation supportés
+
+- Windows 10 / 11
+- Ubuntu 20.04 LTS ou supérieur
+- Tout système Linux avec Docker installé
+
+---
+
+## 4. Installation rapide — Docker (5 min)
+
 ```bash
-# Se placer à la racine du projet
-# Créer et activer l'environnement virtuel
+# 1. Cloner le dépôt
+git clone https://github.com/archix-239/compteur-ciment.git
+cd compteur-ciment
+
+# 2. Créer le fichier de configuration
+cp .env.example .env
+# Ouvrir .env et renseigner JWT_SECRET_KEY et DEFAULT_ADMIN_PASSWORD
+
+# 3. Démarrer les services
+docker-compose up -d
+
+# 4. Vérifier que tout est actif
+docker-compose ps
+```
+
+L'interface est accessible sur **http://localhost** (ou l'IP du serveur).
+
+**Identifiants par défaut :**
+
+| Champ | Valeur |
+|---|---|
+| Utilisateur | `admin` |
+| Mot de passe | valeur de `DEFAULT_ADMIN_PASSWORD` dans `.env` |
+
+> **Arrêt des services :**
+> ```bash
+> docker-compose down
+> ```
+> Les données sont persistées dans le volume Docker `/data`.
+
+---
+
+## 5. Installation développement
+
+### 5.1 Backend (FastAPI)
+
+```bash
+cd backend
+
+# Créer l'environnement virtuel
 python -m venv venv
-source venv/bin/activate          # Linux / macOS
-venv\Scripts\activate             # Windows
+source venv/bin/activate        # Linux / macOS
+# venv\Scripts\activate         # Windows
 
 # Installer les dépendances
 pip install -r requirements.txt
-pip install fastapi uvicorn sqlalchemy python-multipart "python-jose[cryptography]" "passlib[bcrypt]" psutil ultralytics opencv-python pyzbar
 
-# Initialiser la base de données (Crée cement_counter.db)
-export PYTHONPATH=$PYTHONPATH:$(pwd)/backend
-python3 -m app.init_db
+# Lancer le serveur en mode rechargement automatique
+JWT_SECRET_KEY=dev-key DEFAULT_ADMIN_PASSWORD=Admin1234! \
+  uvicorn app.main:app --reload --port 8000
 ```
 
-### 3. Installation du Frontend (React)
+La documentation interactive de l'API est disponible sur **http://localhost:8000/docs** (Swagger UI).
+
+### 5.2 Frontend (React)
+
 ```bash
 cd dashboard
-pnpm install        # ou : npm install --legacy-peer-deps
-```
 
-### 4. Lancer en développement
+# Installer les dépendances (pnpm requis)
+pnpm install
 
-**Terminal 1 — Backend :**
-```bash
-# Depuis la racine du projet
-export PYTHONPATH=$PYTHONPATH:$(pwd)/backend   # Linux/macOS
-set PYTHONPATH=%cd%\backend                    # Windows
-uvicorn app.main:app --host 0.0.0.0 --port 8000 --reload
-```
-
-**Terminal 2 — Frontend :**
-```bash
-cd dashboard
+# Lancer le serveur de développement
 pnpm dev
-# Interface : http://localhost:3000
 ```
 
-### 5. Identifiants par défaut (développement)
-- **Utilisateur** : `admin`
-- **Mot de passe** : `admin1234`
+Le dashboard est accessible sur **http://localhost:3000** et se connecte au backend sur le port 8000.
 
-> **Sécurité :** Ces identifiants sont à usage de développement uniquement. Changez-les avant toute mise en production.
+### 5.3 Exécution simultanée (développement complet)
+
+Ouvrir deux terminaux distincts : le premier pour le backend (section 5.1), le second pour le frontend (section 5.2). Le proxy Vite redirige automatiquement les appels `/api/*` vers FastAPI.
 
 ---
 
-## 🚀 Déploiement en Production
+## 6. Configuration (.env)
 
-### Vue d'ensemble de l'architecture cible
+Copier `.env.example` et renseigner les variables suivantes :
 
-```
-Internet / Réseau local
-        │
-        ▼
-  ┌─────────────┐
-  │    Nginx    │  :80 / :443
-  │  (reverse   │
-  │   proxy)    │
-  └──────┬──────┘
-         │
-    ┌────┴──────┐
-    │           │
-    ▼           ▼
-┌────────┐  ┌──────────┐
-│Frontend│  │ Backend  │
-│ React  │  │ FastAPI  │
-│(static)│  │  :8000   │
-└────────┘  └────┬─────┘
-                 │
-            ┌────▼────┐
-            │  SQLite │
-            │   .db   │
-            └─────────┘
-```
-
-### Étape 1 — Prérequis serveur
-
-#### Matériel
-
-| Composant | Minimum | Recommandé |
-|-----------|---------|-----------|
-| CPU | 4 cœurs @ 2.5 GHz | 8 cœurs @ 3.0 GHz |
-| RAM | 4 Go | 8 Go |
-| GPU | Non requis | NVIDIA 4 Go VRAM (CUDA 11.8+) |
-| Disque | 20 Go libres (SSD) | 100 Go SSD |
-| Réseau | 10 Mbps | 100 Mbps (Ethernet) |
-
-> **Estimation disque captures :** `(sacs/jour) × 100 Ko × (jours rétention)`. Exemple : 8 800 sacs/j × 100 Ko × 90 jours ≈ 79 Go.
-
-#### Logiciels
-
-| Logiciel | Version minimale | Vérification |
-|----------|-----------------|--------------|
-| Docker | 24.0+ | `docker --version` |
-| Docker Compose | 2.20+ | `docker compose version` |
-| Python (hors Docker) | 3.10+ | `python --version` |
-| OS recommandé | Ubuntu 20.04 LTS | — |
-
-```bash
-# Installation Docker sur Ubuntu/Debian
-curl -fsSL https://get.docker.com | sudo sh
-sudo usermod -aG docker $USER
-```
-
-### Étape 2 — Configurer les variables d'environnement
-
-```bash
-# Copier le fichier exemple
-cp .env.example .env
-```
-
-Ouvrez `.env` et renseignez **obligatoirement** ces variables :
-
-```env
-# ─── SÉCURITÉ ────────────────────────────────────────────────
+```dotenv
+# --- Sécurité (obligatoire) ---
 # Générer avec : python -c "import secrets; print(secrets.token_hex(32))"
-JWT_SECRET_KEY=remplacez_par_une_vraie_cle_de_64_caracteres_minimum
+JWT_SECRET_KEY=<clé-hex-64-caractères>
 
-# ─── ORIGINES AUTORISÉES ─────────────────────────────────────
-# IP ou nom de domaine du serveur (sans slash final)
-ALLOWED_ORIGINS=http://192.168.1.45
+# Mot de passe du compte admin créé au premier démarrage (min. 8 caractères)
+DEFAULT_ADMIN_PASSWORD=<mot-de-passe-fort>
 
-# ─── BASE DE DONNÉES ─────────────────────────────────────────
-# Chemin absolu dans le conteneur (ne pas changer sauf migration PostgreSQL)
+# --- Base de données ---
 DATABASE_URL=sqlite:////data/cement_counter.db
 
-# ─── VISION ──────────────────────────────────────────────────
-# Mettre à false si pas de GPU ou pas de caméra connectée au serveur
+# --- CORS ---
+# Lister les origines autorisées (séparées par des virgules)
+ALLOWED_ORIGINS=http://localhost,http://192.168.1.100
+
+# --- Vision ---
 VISION_ENABLED=true
-
-# ─── LOGS ────────────────────────────────────────────────────
-LOG_LEVEL=INFO
+# Index de la caméra USB (0 = première caméra détectée)
+CAMERA_INDEX=0
+# Ou flux IP : CAMERA_URL=rtsp://user:pass@192.168.1.50:554/stream
 ```
 
-> **Générer une clé JWT sécurisée :**
-> ```bash
-> python -c "import secrets; print(secrets.token_hex(32))"
-> # Exemple de sortie : a3f8c2d1e4b5f6a7b8c9d0e1f2a3b4c5d6e7f8a9b0c1d2e3f4a5b6c7d8e9f0a1
-> ```
+> **Ne jamais versionner le fichier `.env` contenant des secrets.** Le fichier `.gitignore` exclut déjà `.env` par défaut.
 
-### Étape 3 — Construire et démarrer
+### Générer JWT_SECRET_KEY
 
 ```bash
-# Construire les images et démarrer les conteneurs en arrière-plan
-docker compose up --build -d
-
-# Vérifier que les conteneurs tournent
-docker compose ps
-
-# Consulter les logs en direct
-docker compose logs -f
-```
-
-Sortie attendue :
-```
-NAME                    STATUS          PORTS
-ciment_backend          running         0.0.0.0:8000->8000/tcp
-ciment_frontend         running         0.0.0.0:80->80/tcp
-```
-
-L'interface est accessible sur `http://<IP_SERVEUR>` (port 80).
-
-### Étape 4 — Premier démarrage et sécurisation
-
-```bash
-# Accéder au shell du conteneur backend
-docker compose exec backend bash
-
-# Réinitialiser le mot de passe admin par un mot de passe fort
-python -c "
-from app.database import SessionLocal
-from app import models
-from passlib.context import CryptContext
-pwd = CryptContext(schemes=['bcrypt'], deprecated='auto')
-db = SessionLocal()
-admin = db.query(models.User).filter_by(username='admin').first()
-admin.hashed_password = pwd.hash('VotreNouveauMotDePasseFort!')
-db.commit()
-print('Mot de passe mis à jour.')
-"
-exit
-```
-
-### Étape 5 — Activer HTTPS (recommandé)
-
-**Option A — Certificat Let's Encrypt (domaine public)**
-```bash
-# Installer Certbot
-sudo apt install certbot python3-certbot-nginx
-
-# Obtenir le certificat (remplacer par votre domaine)
-sudo certbot --nginx -d ciment.votre-domaine.com
-```
-
-**Option B — Certificat auto-signé (réseau interne)**
-```bash
-# Générer le certificat
-openssl req -x509 -nodes -days 365 -newkey rsa:2048 \
-  -keyout ssl/key.pem -out ssl/cert.pem \
-  -subj "/CN=ciment-factory/O=Production/C=FR"
-
-# Déclarer les chemins dans .env
-SSL_CERT_PATH=./ssl/cert.pem
-SSL_KEY_PATH=./ssl/key.pem
-```
-
-Puis activer `force_https=true` dans `Administration > Paramètres Système > Sécurité`.
-
-### Étape 6 — Sauvegardes automatiques
-
-```bash
-# Script de sauvegarde quotidienne (à planifier avec cron)
-cat > /opt/backup_ciment.sh << 'EOF'
-#!/bin/bash
-DATE=$(date +%Y%m%d_%H%M%S)
-BACKUP_DIR=/opt/backups/ciment
-
-mkdir -p $BACKUP_DIR
-
-# Sauvegarde de la base de données
-docker compose -f /opt/ciment/docker-compose.yml exec -T backend \
-  cp /data/cement_counter.db /tmp/backup.db
-
-docker cp ciment_backend:/tmp/backup.db $BACKUP_DIR/db_$DATE.db
-
-# Conserver seulement les 30 derniers jours
-find $BACKUP_DIR -name "db_*.db" -mtime +30 -delete
-
-echo "Sauvegarde $DATE terminée : $BACKUP_DIR/db_$DATE.db"
-EOF
-
-chmod +x /opt/backup_ciment.sh
-
-# Planifier tous les jours à 3h du matin
-echo "0 3 * * * /opt/backup_ciment.sh >> /var/log/ciment_backup.log 2>&1" | crontab -
-```
-
-### Étape 7 — Mise à jour de l'application
-
-```bash
-# Récupérer la dernière version
-git pull origin main
-
-# Reconstruire et redémarrer sans interruption
-docker compose up --build -d --no-deps backend
-docker compose up --build -d --no-deps frontend
-
-# Vérifier le démarrage
-docker compose logs --tail=50 backend
-```
-
-### Étape 8 — Supervision des conteneurs (optionnel)
-
-```bash
-# Voir l'utilisation ressources en temps réel
-docker stats
-
-# Redémarrer un conteneur planté
-docker compose restart backend
-
-# Arrêt propre de toute l'application
-docker compose down
-
-# Arrêt + suppression des volumes (ATTENTION : efface la BDD)
-docker compose down -v
-```
-
-### Checklist de mise en production
-
-```
-□ JWT_SECRET_KEY défini et unique (min. 32 caractères)
-□ Mot de passe admin changé depuis admin1234
-□ ALLOWED_ORIGINS restreint à l'IP/domaine du serveur
-□ HTTPS activé (certificat valide ou auto-signé)
-□ Sauvegarde automatique quotidienne planifiée
-□ Pare-feu : port 80/443 ouvert, port 8000 fermé vers l'extérieur
-□ Retention de données configurée dans Paramètres Système
-□ Comptes utilisateurs créés avec les bons rôles
-□ Caméra testée et ligne virtuelle positionnée
+python -c "import secrets; print(secrets.token_hex(32))"
+# Exemple de sortie : a3f2c8e1d4b7...
 ```
 
 ---
 
-## 📝 Guide de Démarrage Rapide (Test)
-1. **Connexion** : Connectez-vous avec les identifiants admin.
-2. **Démarrage** : Allez dans "Gestion des Sessions" et cliquez sur **"Nouvelle Session"**. Le moteur de vision commencera à enregistrer les détections.
-3. **Flux Direct** : Allez dans "Flux en Direct" pour voir le retour caméra avec les boîtes de détection IA.
-4. **Comptage** : Faites passer un sac (ou un objet simulé) devant la caméra. Il doit franchir la ligne virtuelle pour être compté.
-5. **Vérification** : Consultez le "Journal de Production" pour voir l'entrée créée et cliquez sur l'icône "œil" pour voir la capture d'image enregistrée.
-6. **Arrêt** : Retournez dans "Gestion des Sessions" pour arrêter la session et figer les statistiques.
+## 7. Utilisation
 
-> **Manuel complet :** Consultez [MANUEL_UTILISATEUR.md](./MANUEL_UTILISATEUR.md) pour la documentation détaillée par rôle (Opérateur, Superviseur, Administrateur).
+### 7.1 Rôles et accès
 
-## 📁 Structure du Dépôt
-- `backend/app/` : Code source de l'API FastAPI et du moteur Vision.
-- `dashboard/frontend/src/` : Code source de l'interface React.
-- `models/` : Contient le modèle YOLO `best_V5.pt`.
-- `backend/static/captures/` : Dossier de stockage des snapshots de production.
+| Rôle | Public cible | Accès |
+|---|---|---|
+| **Admin** | Responsable IT / superviseur | Tout : configuration, utilisateurs, rôles, caméras, backup |
+| **Opérateur** | Agent de ligne | Sessions, qualité, alertes, rapports |
+| **Viewer** | Direction / audit | Dashboard, logs, rapports (lecture seule) |
+
+Les rôles personnalisés peuvent être créés et affinés depuis l'interface d'administration.
+
+### 7.2 Démarrer une session de production
+
+1. Se connecter avec un compte **Opérateur** ou **Admin**.
+2. Naviguer vers **Production > Sessions**.
+3. Cliquer sur **Nouvelle session** et renseigner le nom du poste.
+4. Cliquer sur **Démarrer** — le moteur de vision s'active et le comptage commence.
+5. En fin de poste, cliquer sur **Clôturer la session** pour figer le rapport.
+
+### 7.3 Exporter un rapport
+
+Depuis **Rapports**, sélectionner la plage de dates et le format souhaité :
+
+```
+CSV  →  import direct Excel / Google Sheets
+Excel →  classeur formaté avec graphiques
+PDF   →  rapport signé prêt à archiver
+JSON  →  intégration ERP ou API tierce
+```
+
+### 7.4 Accès à l'API
+
+Chaque endpoint est documenté sur `/docs`. L'authentification s'effectue par :
+
+- **JWT** : `Authorization: Bearer <token>` (obtenu via `POST /api/auth/login`)
+- **Clé API** : `X-API-Key: <clé>` (générée depuis le panneau Admin)
+
+Exemple d'appel :
+
+```bash
+# Obtenir le token
+TOKEN=$(curl -s -X POST http://localhost/api/auth/login \
+  -H "Content-Type: application/json" \
+  -d '{"username":"admin","password":"Admin1234!"}' \
+  | python -c "import sys,json; print(json.load(sys.stdin)['access_token'])")
+
+# Récupérer le résumé de la session en cours
+curl -H "Authorization: Bearer $TOKEN" http://localhost/api/sessions/current/summary
+```
 
 ---
 
-## État d'Avancement — Intégration Backend ↔ Frontend
-
-Suivi de l'intégration réelle (remplacement des données fictives par des appels API) pour chaque interface du dashboard.
-
-| # | Interface | Statut | Détails |
-|---|-----------|--------|---------|
-| 0 | **Tableau de Bord** | Fait | `GET /api/dashboard/summary` retourne toutes les métriques calculées depuis la BDD : totalBags, productionRate (5 min glissantes), avgInterval, consistency (1−CV), stddev, firstHalfInterval, secondHalfInterval, slowdownPercent, intervalData (14 buckets/min), heatmapData (6×5s), productionGaps (écarts > 2×moy). Bouton Actualiser connecté. Données temps réel via WebSocket `COUNT_EVENT`. |
-| 1 | **Configuration — Paramètres Caméra** | Fait | GET/PUT `/api/config/camera`, POST `/api/config/camera/test` (test réel OpenCV). Formulaire connecté, sauvegarde en BDD, test de connexion caméra fonctionnel. Preview WebSocket vidéo. |
-| 2 | **Configuration — Modèle IA** | Fait | GET/PUT `/api/config/model` connecté au frontend. Paramètres (modèle, seuil confiance, NMS, max det, imgsz, tracking persist) persistés en BDD et appliqués à chaud au moteur vision. Upload `.pt` via `POST /api/models/upload`, activation via `POST /api/models/activate`, suppression via `DELETE /api/models/{filename}`. |
-| 3 | **Configuration — Ligne Virtuelle** | Fait | GET/PUT `/api/config/virtual-line` connecté. Position, largeur et direction persistées et appliquées en temps réel à la logique de franchissement de ligne. |
-| 4 | **Configuration — Templates & Couleurs** | Fait | **Scoring temps réel remplaçant les valeurs aléatoires.** `vision_engine.py` : `apply_template_config()` charge le template PNG/JPEG, pré-calcule les keypoints ORB ; `_compute_logo_score()` = ratio de good-matches ORB (Hamming < 55) / keypoints template [0-1] ; `_compute_color_score()` = meilleure fraction de pixels dans la plage HSV parmi les références [0-1]. `GET /api/config/template` : config active (URL, dims, seuils) + historique fichiers disque. `POST /api/config/template/upload` : upload image (multipart) → sauvegardé dans `backend/static/templates/`, activé et appliqué à chaud. `POST /api/config/template/activate/{filename}` : bascule template actif. `DELETE /api/config/template/history/{filename}` : supprime (interdit sur actif). `PUT /api/config/template/settings` : met à jour seuil logo + seuil couleur. `GET /api/config/colors` : liste JSON des références couleurs (hex, tolérance, plages HSV). `POST /api/config/colors` : ajoute couleur (hex → HSV range calculé via `colorsys`). `PUT /api/config/colors/{idx}` : modifie nom/hex/tolérance. `DELETE /api/config/colors/{idx}` : supprime. Paramètres stockés dans `SystemSettings`. Chargement automatique au démarrage (lifespan). Preview image cliquable. Historique grille. Sliders seuils logo/couleur. Swatch + plages HSV par couleur. Flash banner. |
-| 5 | **Monitoring — Flux en Direct** | Fait | Streaming vidéo via WebSocket `/ws/video` (base64 JPEG). Hook `useVideoStream` réutilisable. FPS en temps réel. Reconnexion automatique. Support RTSP/HTTP/Webcam. |
-| 6 | **Production — Gestion des Sessions** | Fait | Sessions réelles connectées via API: démarrage/arrêt, session active, stats live et historique paginé (`GET /sessions/`, `POST /sessions/start`, `POST /sessions/stop/{id}`). |
-| 7 | **Production — Journal de Production** | Fait | Tableau branché sur `GET /api/logs/` avec pagination backend + filtres (statut, recherche identifiant), miniatures et ouverture capture. |
-| 8 | **Production — Chronologie** | Fait | `GET /api/timeline/hourly?hours=N` : buckets horaires réels (sacs comptés, intervalle moyen, rejetés). Graphique combiné Bar+Line. Analyse des pics (max/min horaire). Boutons de sélection rapide : 6H / 24H / 3 jours. État vide et chargement gérés. |
-| 9 | **Qualité — Tableau de Bord** | Fait | Dashboard qualité branché sur `/api/quality/summary` avec distributions de confiance/logo calculées depuis les logs réels. |
-| 10 | **Qualité — Vérification Manuelle** | Fait | File de revue connectée (`GET /api/quality/manual-verification`) + action opérateur via `PATCH /api/logs/{id}` (Valider/Rejeter) + historique (`GET /api/quality/reviews`). |
-| 11 | **Qualité — Détection d'Anomalies** | Fait | Liste d'anomalies réelles depuis `/api/quality/anomalies` (rejets + scores faibles) avec miniatures snapshots backend. |
-| 12 | **Alertes — Gestion des Alertes** | Fait | `GET /api/alerts/history` : historique réel depuis la BDD. `GET\|PUT /api/alerts/settings` : paramètres persistés (son, email, Slack, téléphone). `PATCH /api/alerts/history/{id}/read`, `POST /api/alerts/history/read-all`, `DELETE /api/alerts/history[/{id}]` : gestion lecture/suppression. `PUT /api/alerts/rules/{id}` : édition seuils + activation règles. `POST /api/alerts/history` : alerte manuelle opérateur. `POST /api/alerts/evaluate` : évaluation immédiate des règles vs métriques réelles. Badge unread count en temps réel sur le Sidebar (toutes les 30s). Tooltips `?` sur chaque section. |
-| 13 | **Rapports — Production** | Fait | `GET /api/reports/production?period=day\|week\|month` : métriques réelles (totalBags, avgInterval, detectionRate, sessionHours, availability, OEE) + deltas vs période précédente. Graphique comparaison actuelle vs précédente (buckets horaires/journaliers/hebdo). Décomposition OEE bar chart (Disponibilité, Performance, Qualité). Analyses clés dynamiques (pic de production, consistance). Export CSV direct `GET /api/reports/export/csv`. Icônes `?` tooltip sur chaque indicateur. |
-| 14 | **Rapports — Export de Données** | Fait | Exports manuels **CSV / XLSX / PDF / JSON** sur 4 sources (comptages bruts, sessions, anomalies, qualité) × 5 périodes (aujourd'hui, hier, 7j, 30j, personnalisé). XLSX avec mise en forme industrielle (`openpyxl`). PDF A4 paysage mis en forme (`fpdf2`, max 2 000 lignes). Prévisualisation en temps réel (lignes + taille). Planification automatique : fréquence quotidienne/hebdo/mensuelle, heure UTC, source, format, période — sauvegardé en BDD. Déclenchement manuel immédiat. Historique des exports automatiques avec lien de téléchargement. Historique des 20 derniers exports manuels. Tooltips `?` partout. |
-| 15 | **Rapports — Piste d'Audit** | Fait | `GET /api/audit/?page=&page_size=&action=&username=` : journal d'audit paginé côté serveur avec filtres par type d'action et recherche par username. Actions color-codées (login, failed_login, created, updated, deleted, password_changed). Export CSV côté client (1 000 entrées max). Statistiques : total événements, utilisateurs uniques, connexions, échecs. |
-| 16 | **Administration — Utilisateurs** | Fait | Nouveau modèle BDD `user_activities` + colonnes `last_login`/`login_count` sur `users` (migration automatique). `GET /api/users/` : liste complète avec last_login + login_count. `POST /api/users/` : création (bcrypt, min 6 car.). `PUT /api/users/{id}` : modification nom/rôle/is_active. `PATCH /api/users/{id}/password` : changement mot de passe (bcrypt). `DELETE /api/users/{id}` : suppression + enregistrement audit. `GET /api/users/activity?limit=N` : journal d'activité (connexions, échecs, créations, suppressions, changements mdp). `POST /token` enrichi : enregistre `UserActivity` (login / failed_login) avec IP + User-Agent, met à jour `last_login` et `login_count`. KPI strip (total/actifs/admins). Recherche temps réel. Modal ajout/édition. Modal changement mdp (toggle visibilité). Toggle actif/inactif. Dialog suppression. Onglet Historique scrollable (50 entrées). Onglet Rôles & Permissions avec compteur live par rôle. Note sécurité bcrypt/JWT. Flash banner résultat. |
-| 17 | **Administration — Paramètres Système** | Fait | `GET/PUT /api/system/general-settings` : identité site, fuseau, langue, préférences notifications, niveau log, rétention. Onglet **Alertes** : canaux (son, email, Slack, téléphone superviseur). Onglet **Sécurité** : `GET/PUT /api/system/security-settings` (jwt_expire_minutes, max_login_attempts, session_timeout, 2FA, force_https). Onglet **Archivage** : export JSON, import JSON, téléchargement `.db`. Onglet **Performance** : `GET/PUT /api/system/performance-settings`. |
-| 18 | **Administration — Appareils** | Fait | Nouveau modèle BDD `cameras` (multi-caméra). `GET /api/devices/cameras` : liste toutes les caméras (nom, type, URL, résolution, FPS, statut dernier test, latence). `POST /api/devices/cameras` : ajout caméra. `PUT /api/devices/cameras/{id}` : modification. `DELETE /api/devices/cameras/{id}` : suppression (interdit sur caméra active). `POST /api/devices/cameras/{id}/test` : connexion OpenCV réelle (met à jour `last_status`, `last_latency_ms`, `last_tested_at`). `POST /api/devices/cameras/{id}/activate` : bascule le moteur de vision vers cette caméra sans redémarrage (met à jour les SystemSettings legacy). `GET /api/devices/system` : CPU/RAM/disque réels (psutil), température CPU. `GET /api/devices/services` : statut 4 services (YOLO thread, SQLite, FastAPI, MJPEG). Seed automatique depuis SystemSettings au 1er démarrage. Modal ajout/édition. Dialog de confirmation suppression. Flash banner résultat. |
-| 19 | **Administration — API** | Fait | `GET /api/apikeys/` : liste les clés actives (préfixe, nom, scope, date création). `POST /api/apikeys/` : génère une clé sécurisée (`cmt_` + 48 hex) — raw key affichée **une seule fois**, stockée en SHA-256. `DELETE /api/apikeys/{id}` : révocation avec confirmation. Scopes : read / write / admin. Documentation d'utilisation intégrée. |
-| 20 | **Analytique — Performance (OEE)** | Fait | `GET /api/analytics/oee?hours=N` : OEE/TRS calculé depuis la BDD (disponibilité sessions, performance vs cible 1 100 sacs/h, qualité conformes/total). Sélecteur de période 6H / 24H / 7J / 30J. Graphique production réel + forecast (moyenne mobile 3 buckets) + cible. Camembert répartition du temps (production/micro-arrêts/pannes/inactivité). Recommandations IA dynamiques. Icônes `?` avec tooltip explicatif sur chaque indicateur. |
-| 21 | **Maintenance — Santé Système** | Fait | `GET /api/system/health` enrichi : CPU/RAM/disque réels (psutil), uptime OS réel, I/O réseau Rx/Tx (Mbps, delta entre appels), température CPU (Linux/Mac via psutil — N/A sur Windows), statut réel des 4 services (moteur YOLOv8 thread alive, FastAPI, SQLite, flux MJPEG), métriques BDD réelles (taille fichier, nb logs/sessions/alertes, temps requête mesuré), 10 derniers événements depuis AlertHistory + Sessions. Barres colorées (vert/jaune/rouge). Tooltips `?`. Actualisation auto toutes les 5s. |
-| 22 | **Maintenance — Base de Données** | Fait | `GET /api/database/stats` : taille BDD, fragmentation (PRAGMA freelist/page_count), intégrité (quick_check), stats par table (rows, taille via dbstat, query_ms, dernier enregistrement), usage disque psutil. `POST /api/database/optimize` : VACUUM (sqlite3 raw, hors transaction) + ANALYZE + espace récupéré. `POST /api/database/reindex` : REINDEX complet + temps elapsed. `GET /api/database/backup` : téléchargement direct du fichier `.db`. `POST /api/database/archive` : suppression sessions terminées + logs antérieurs à la rétention configurée. `POST /api/database/purge` : suppression définitive logs + captures + quality_reviews (subquery). Dialog de confirmation avant actions destructives. Badge fragmentation coloré. Card statut santé dynamique (vert si saine, jaune si fragmentée). |
-| 23 | **Maintenance — Diagnostics** | Fait | `GET /api/diagnostics/metrics` : FPS (moteur ou delta 60s), inference_ms (attribut engine ou proxy intervalle), précision (conformes/total), CPU/RAM psutil. `GET /api/diagnostics/logs` : flux structuré AlertHistory + Sessions (INFO/WARN/ERROR/SUCCESS). `GET /api/diagnostics/logs/download` : export .txt horodaté. `POST /api/diagnostics/run-tests` : **5 tests réels** — (1) **YOLO** `v_eng.running + thread.is_alive()` ; (2) **SQLite** écriture+suppression SystemSetting mesurée en ms ; (3) **Disque** écriture 1 MB fichier temp, calcul MB/s ; (4) **API** latence d'un COUNT SQL ; (5) **Caméra** connexion OpenCV réelle via `_test_camera_sync` (lit `camera_source_type`/`camera_url` depuis SystemSettings, retourne résolution, FPS détecté, latence). `POST /api/diagnostics/benchmark` : 20 inférences YOLOv11 sur frame 640×640 vierge — avg/min/max ms + FPS équivalent. Console avec filtre type + effacement local. Badge résultat tests sur l'onglet. Historique benchmark (5 derniers). Auto-refresh 10s ON/OFF. |
-| 24 | **Intégration — Tiers** | Fait | `GET/PUT /api/system/integration-settings` : configuration Webhook (URL + secret), SMTP (Gmail, Outlook, etc.), Slack (webhook URL) et Microsoft Teams (webhook URL) avec toggles d'activation. `POST /api/system/test-webhook` : test live du webhook configuré (httpx async). |
-
-### Récapitulatif des corrections de sécurité appliquées
-
-| # | Problème | Correction |
-|---|----------|-----------|
-| 1 | Endpoints `/api/users/*` et `/api/roles/*` publics | `_require_admin` dependency sur tous ces endpoints |
-| 2 | `localhost:8000` hardcodé dans 3 pages frontend | Remplacé par `API_URL` depuis `@/lib/api` + helper `authFetch` |
-| 3 | Secret JWT avec valeur par défaut faible | Avertissement `logger.warning` au démarrage si valeur par défaut |
-| 4 | CORS `"*"` par défaut avec `allow_credentials=True` | Avertissement si `ALLOWED_ORIGINS` non défini |
-| 5 | `print()` (~25 occurrences) dans `vision_engine.py` | Remplacés par `logger.info/warning/error/debug` |
-| 6 | Scores `logo_score` et `color_score` aléatoires si pas de template | Retournent `0.0` (score neutre déterministe) |
-| 7 | `auth.py` : expiration token fixe à 30min, non configurable | Lit `JWT_ACCESS_TOKEN_EXPIRE_MINUTES` depuis l'env (défaut 60min) |
-| 8 | Pagination manquante sur `/api/users/activity` | Paramètre `page` ajouté, réponse paginée avec `total` |
-
-### API & WebSocket — Référence rapide
-
-| Méthode | Endpoint | Description |
-|---------|----------|-------------|
-| `GET` | `/api/dashboard/summary` | KPI dashboard complets : comptages, taux de production, intervalles, consistance, graphiques intervalles/heatmap, production gaps — tout calculé depuis la BDD |
-| `GET` | `/api/models/list` | Liste les fichiers `.pt` dans `models/` avec tailles et modèle actif |
-| `POST` | `/api/models/activate` | Active un modèle par chemin, persistance BDD + hot-apply moteur |
-| `POST` | `/api/models/upload` | Upload d'un fichier `.pt` (multipart) vers `models/` |
-| `DELETE` | `/api/models/{filename}` | Supprime un `.pt` (refuse si modèle actif) |
-| `GET` | `/api/timeline/hourly` | Distribution horaire sur N dernières heures (`?hours=6\|24\|72`) : count, interval moyen, rejets par bucket + analyse des pics |
-| `GET` | `/api/alerts/history` | Historique des alertes (`?limit=100&unread_only=false`) : id, title, message, alert_type, is_read, timestamp |
-| `POST` | `/api/alerts/history` | Crée une alerte manuelle (title, message, alert_type) |
-| `PATCH` | `/api/alerts/history/{id}/read` | Marque une alerte comme lue |
-| `POST` | `/api/alerts/history/read-all` | Marque toutes les alertes comme lues |
-| `DELETE` | `/api/alerts/history/{id}` | Supprime une alerte |
-| `DELETE` | `/api/alerts/history` | Efface tout l'historique |
-| `GET` | `/api/alerts/rules` | Liste les règles d'alerte (id, name, type, threshold, is_active) |
-| `PUT` | `/api/alerts/rules/{id}` | Modifie une règle (name, threshold, is_active) |
-| `GET` | `/api/alerts/settings` | Paramètres de notification (son, email, Slack, téléphone) |
-| `PUT` | `/api/alerts/settings` | Sauvegarde les paramètres de notification |
-| `GET` | `/api/alerts/unread-count` | Nombre d'alertes non lues (pour badge Sidebar) |
-| `POST` | `/api/alerts/evaluate` | Évalue les règles actives vs métriques récentes, crée des alertes si déclenchées |
-| `POST` | `/api/alerts/rules` | Crée une nouvelle règle d'alerte (name, type, threshold, is_active) |
-| `DELETE` | `/api/alerts/rules/{id}` | Supprime une règle d'alerte |
-| `GET` | `/api/system/general-settings` | Paramètres généraux du site (nom, localisation, fuseau, langue, notifications, logs) |
-| `PUT` | `/api/system/general-settings` | Sauvegarde les paramètres généraux |
-| `GET` | `/api/analytics/oee` | OEE complet (`?hours=6\|24\|168\|720`) : oee, oeeDelta, availability, performance, quality, hourlyData (buckets adaptatifs), downtimeData (pie répartition), recommendations IA dynamiques |
-| `GET` | `/api/reports/production` | Rapport de production (`?period=day\|week\|month`) : KPI + deltas vs période précédente, trendData comparaison, oeeData (Disponibilité/Performance/Qualité), peak bucket, consistance |
-| `GET` | `/api/reports/export/preview` | Estimation rows + taille fichier pour period+source donnés (`?period=today\|yesterday\|last-7-days\|last-30-days\|custom&source=counts\|sessions\|anomalies\|quality`) |
-| `GET` | `/api/reports/export/data` | Export réel CSV / XLSX / PDF / JSON (`?period=…&source=…&fmt=csv\|xlsx\|pdf\|json&date_from=&date_to=`) — 4 sources, déclenche téléchargement |
-| `GET` | `/api/reports/export/history` | Historique des 20 derniers exports manuels générés (in-memory, reset au redémarrage) |
-| `GET` | `/api/reports/export/schedule` | Config de planification automatique (enabled, frequency, time, source, format, period, email) |
-| `PUT` | `/api/reports/export/schedule` | Sauvegarde la config de planification en BDD (SystemSettings keys `export_sched_*`) |
-| `POST` | `/api/reports/export/schedule/run` | Déclenche immédiatement un export planifié et sauvegarde le fichier dans `backend/static/exports/` |
-| `GET` | `/api/reports/export/scheduled` | Historique des 10 derniers exports automatiques avec URL de téléchargement |
-| `GET` | `/api/reports/export/csv` | Alias legacy — redirige vers `/api/reports/export/data` (compatibilité ascendante) |
-| `GET` | `/api/database/stats` | Stats BDD : taille fichier, fragmentation, intégrité, usage disque, rows+taille+query_ms par table |
-| `POST` | `/api/database/optimize` | VACUUM (sqlite3 raw) + ANALYZE — retourne espace récupéré en KB |
-| `POST` | `/api/database/reindex` | REINDEX complet de tous les index SQLite |
-| `GET` | `/api/database/backup` | Téléchargement direct du fichier `.db` (FileResponse) |
-| `POST` | `/api/database/archive` | Supprime sessions terminées + logs antérieurs à `days` (défaut : retention_days) |
-| `POST` | `/api/database/purge` | Suppression définitive logs + captures + quality_reviews antérieurs à `days` |
-| `GET` | `/api/diagnostics/metrics` | KPIs temps réel : fps, inference_ms, accuracy_pct, cpu_pct, ram_pct, engine_alive |
-| `GET` | `/api/diagnostics/logs` | Flux d'événements structuré (AlertHistory + Sessions) — `?limit=N` |
-| `GET` | `/api/diagnostics/logs/download` | Téléchargement des logs en .txt horodaté |
-| `POST` | `/api/diagnostics/run-tests` | Tests composants : **(1)** yolo `thread.is_alive()` **(2)** db écriture+suppression ms **(3)** disk write 1 MB MB/s **(4)** api COUNT latency ms **(5)** camera OpenCV réel (résolution+FPS) — body `{"test":"key"}` pour test unitaire |
-| `POST` | `/api/diagnostics/benchmark` | Benchmark IA : 20 inférences YOLOv11 640×640 — retourne avg/min/max ms + fps_equiv |
-| `GET` | `/api/users/` | Liste tous les utilisateurs (username, full_name, role, is_active, last_login, login_count) |
-| `POST` | `/api/users/` | Crée un utilisateur (username, full_name, role, password — bcrypt) |
-| `PUT` | `/api/users/{id}` | Modifie full_name, role et/ou is_active |
-| `PATCH` | `/api/users/{id}/password` | Change le mot de passe (bcrypt, min 6 car.) |
-| `DELETE` | `/api/users/{id}` | Supprime un utilisateur + enregistre l'action dans UserActivity |
-| `GET` | `/api/users/activity` | Journal d'activité : connexions, échecs, créations, suppressions, changements mdp — `?limit=N` |
-| `GET` | `/api/devices/cameras` | Liste toutes les caméras configurées (nom, type, URL, statut, latence) |
-| `POST` | `/api/devices/cameras` | Crée une nouvelle caméra (name, source_type, url, resolution, fps, notes) |
-| `PUT` | `/api/devices/cameras/{id}` | Modifie les paramètres d'une caméra |
-| `DELETE` | `/api/devices/cameras/{id}` | Supprime une caméra (interdit si `is_active=true`) |
-| `POST` | `/api/devices/cameras/{id}/test` | Teste la connexion OpenCV réelle — met à jour last_status/last_latency_ms |
-| `POST` | `/api/devices/cameras/{id}/activate` | Active cette caméra : bascule le moteur de vision + synchro SystemSettings |
-| `GET` | `/api/devices/system` | Métriques serveur temps réel : cpu_pct, ram_used_gb, disk_pct, cpu_temp_c (psutil) |
-| `GET` | `/api/devices/services` | Statut des 4 services : YOLO (thread alive), SQLite (ping), FastAPI, MJPEG/WebSocket |
-| `GET` | `/api/config/template` | Config template active + historique fichiers + couleurs + seuils |
-| `POST` | `/api/config/template/upload` | Upload image de référence (JPEG/PNG) — activée immédiatement |
-| `POST` | `/api/config/template/activate/{filename}` | Active un template de l'historique |
-| `DELETE` | `/api/config/template/history/{filename}` | Supprime un template (interdit si actif) |
-| `PUT` | `/api/config/template/settings` | Met à jour seuil logo_score et seuil color_score |
-| `GET` | `/api/config/colors` | Liste les références couleurs (hex, tolérance, plages HSV H/S/V) |
-| `POST` | `/api/config/colors` | Ajoute une couleur (hex → plage HSV calculée automatiquement) |
-| `PUT` | `/api/config/colors/{idx}` | Modifie nom/hex/tolérance d'une référence |
-| `DELETE` | `/api/config/colors/{idx}` | Supprime une référence couleur |
-| `GET` | `/api/config/camera` | Récupère la configuration caméra actuelle |
-| `PUT` | `/api/config/camera` | Sauvegarde la configuration caméra |
-| `POST` | `/api/config/camera/test` | Teste la connexion à la source vidéo (vérification réelle via OpenCV) |
-| `GET` | `/api/config/model` | Récupère la configuration IA active (modèle + seuils inférence) |
-| `PUT` | `/api/config/model` | Sauvegarde et applique à chaud la configuration IA |
-| `GET` | `/api/config/virtual-line` | Récupère la configuration de la ligne virtuelle |
-| `PUT` | `/api/config/virtual-line` | Sauvegarde et applique la ligne virtuelle (position, largeur, direction) |
-| `GET` | `/sessions/` | Liste paginée des sessions + session active courante |
-| `GET` | `/sessions/active` | Retourne la session active (ou `null`) |
-| `POST` | `/sessions/start` | Démarre une session de production (idempotent si déjà active) |
-| `POST` | `/sessions/stop/{session_id}` | Arrête une session active |
-| `GET` | `/api/logs/` | Journal de production paginé (filtres `status`, `search`, `session_id`) |
-| `PATCH` | `/api/logs/{id}` | Met à jour la décision qualité d'un sac (validation/rejet/correction) et journalise la revue |
-| `GET` | `/api/quality/manual-verification` | File des sacs à vérifier manuellement (pagination + recherche) |
-| `GET` | `/api/quality/reviews` | Historique des actions de revue humaine |
-| `GET` | `/api/quality/anomalies` | Anomalies qualité générées depuis les logs (rejets/faible confiance) |
-| `GET` | `/api/quality/summary` | KPI et distributions qualité réelles pour les graphiques |
-| `WS` | `/ws/video` | Stream vidéo temps réel (frames JPEG en base64 via WebSocket) |
-| `WS` | `/ws` | Événements temps réel (COUNT_EVENT, etc.) |
-| `GET` | `/api/vision/video_feed` | Stream MJPEG (fallback, conservé pour compatibilité) |
-
-### Architecture du streaming vidéo
+## 8. Structure du projet
 
 ```
-Caméra (RTSP/HTTP/USB) → OpenCV → VisionEngine (thread dédié)
-    ↓ YOLO detection + annotation
-    ↓ encode JPEG + base64
-    ↓ broadcast via queue (backpressure: drop oldest frame)
-WebSocket /ws/video → Frontend (useVideoStream hook) → <img> element
+compteur_ciment/
+├── .github/
+│   └── workflows/
+│       ├── ci.yml             # Tests et build (push / PR)
+│       └── cd.yml             # Build Docker + release (tags semver)
+│
+├── backend/
+│   ├── app/
+│   │   ├── main.py            # FastAPI app (~4 900 lignes, 121 routes)
+│   │   ├── models.py          # Modèles SQLAlchemy (11 tables)
+│   │   ├── auth.py            # JWT + bcrypt
+│   │   ├── schemas.py         # Schémas Pydantic (validation)
+│   │   ├── database.py        # Connexion SQLite / PostgreSQL
+│   │   └── vision_engine.py   # YOLOv8 + ORB + analyse colorimétrique
+│   ├── models/                # Fichiers .pt (poids YOLO)
+│   ├── static/                # Captures d'images des détections
+│   ├── tests/                 # Suite pytest (52 tests)
+│   ├── requirements.txt
+│   └── Dockerfile
+│
+├── dashboard/                 # Frontend React + TypeScript
+│   ├── src/
+│   │   ├── pages/             # ~25 pages (Dashboard, Sessions, Rapports…)
+│   │   ├── components/        # Composants réutilisables (charts, tables…)
+│   │   └── contexts/          # AuthContext, ThemeContext
+│   ├── package.json           # pnpm workspaces
+│   └── Dockerfile
+│
+├── docs/                      # Documentation détaillée
+│   ├── guide-administrateur.md
+│   ├── guide-operateur.md
+│   ├── guide-deploiement.md
+│   └── guide-continuite-activites.md
+│
+├── docker-compose.yml
+├── .env.example
+└── README.md                  # Ce fichier
 ```
 
-**Protocoles caméra supportés :**
-- **RTSP** : `rtsp://user:pass@192.168.1.x:554/stream` (transport TCP forcé pour fiabilité)
-- **HTTP/ONVIF** : `http://192.168.1.x:8080/video`
-- **Webcam locale** : Index entier (0, 1, 2...)
-- **Fichier vidéo** : Chemin absolu vers .mp4, .avi, etc.
+---
 
+## 9. Tests
 
-## Correctifs Post-Test (Feedback Opérationnel)
+### Backend (pytest)
 
-### Correctif 1 — Application réelle des paramètres caméra
-- Le backend applique les propriétés OpenCV matérielles (`FRAME_WIDTH/HEIGHT`, `FPS`, `BRIGHTNESS`, `CONTRAST`, `AUTOFOCUS`) **et** un post-processing logiciel garanti dans la boucle vision (`resize` + `convertScaleAbs`).
-- Pour les fichiers vidéo, le FPS demandé est respecté via régulation temporelle (`sleep`) côté boucle de lecture.
-- Lors d'une sauvegarde caméra, le flux est redémarré proprement pour les sources qui ne supportent pas le hot-apply.
-- Stabilisation RTSP Windows: arrêt/redémarrage protégé (pas de second thread si stop incomplet), restart caméra uniquement quand la source change, et test caméra sans pause forcée du moteur pour les flux RTSP afin d'éviter les timeouts/assertions FFMPEG.
+```bash
+cd backend
 
-### Correctif 2 — Ligne virtuelle directionnelle + visualisation réelle
-- Nouveaux endpoints `GET/PUT /api/config/line` avec `type` (`horizontal`/`vertical`) et `direction` (`top-down`, `bottom-up`, `left-right`, `right-left`) + cohérence forcée type/direction.
-- La page **Configuration > Ligne Virtuelle** conserve le design validé et affiche le flux réel WebSocket avec overlay React de la ligne (source visuelle unique).
+# Activer l'environnement virtuel si ce n'est pas déjà fait
+source venv/bin/activate
 
-### Correctif 3 — Live Stream & Sessions
-- Suppression du doublon d'overlay: le backend envoie une image sans ligne, et React dessine l'overlay (source de vérité unique).
-- Le design Industrial Dark Mode de **Flux en Direct** et **Gestion des Sessions** est restauré; seules les valeurs backend ont été reconnectées (sans refonte structurelle).
-- Les badges Live Stream (FPS, nom caméra, modèle actif) sont branchés sur des données runtime via `GET /api/config/runtime`.
-- Endpoints de suppression sessions conservés côté backend: `DELETE /api/sessions/{id}` et `DELETE /api/sessions/batch`.
+# Lancer la suite complète (52 tests)
+JWT_SECRET_KEY=test DEFAULT_ADMIN_PASSWORD=Ciment_Test_2024! \
+  python -m pytest tests/ -v
+```
+
+Exemple de sortie attendue :
+
+```
+tests/test_auth.py::test_login_success          PASSED
+tests/test_sessions.py::test_create_session     PASSED
+tests/test_vision.py::test_line_crossing        PASSED
+...
+52 passed in 8.41s
+```
+
+### Frontend (TypeScript + build Vite)
+
+```bash
+cd dashboard
+
+# Vérification des types
+pnpm tsc --noEmit
+
+# Build de production (valide également le bundle)
+pnpm build
+```
+
+---
+
+## 10. CI/CD
+
+Le pipeline GitHub Actions se compose de deux workflows :
+
+### `ci.yml` — Tests et lint (push + PR)
+
+```
+push / pull_request
+    │
+    ├── ruff (linting Python)
+    ├── pytest (52 tests backend)
+    └── tsc + vite build (frontend)
+```
+
+### `cd.yml` — Build Docker + release (tags semver)
+
+```
+push tag v*.*.*
+    │
+    ├── docker build backend
+    ├── docker build frontend
+    ├── docker push → registry
+    └── GitHub Release (artefacts)
+```
+
+Les images Docker sont taguées avec la version semver (`v1.2.3`) et `latest`.
+
+---
+
+## 11. Documentation
+
+| Document | Contenu |
+|---|---|
+| [Guide Administrateur](./docs/guide-administrateur.md) | Configuration système, gestion des utilisateurs et des rôles, intégrations (SMTP, Slack, Teams), sauvegarde |
+| [Guide Opérateur](./docs/guide-operateur.md) | Démarrage des sessions, contrôle qualité, alertes, exports |
+| [Guide de Déploiement](./docs/guide-deploiement.md) | Installation Docker, configuration Nginx, HTTPS, variables d'environnement |
+| [Guide de Continuité](./docs/guide-continuite-activites.md) | Procédures de reprise après incident, backup, monitoring |
+
+La documentation interactive de l'API REST est générée automatiquement par FastAPI et accessible à l'adresse `/docs` (Swagger UI) ou `/redoc` (ReDoc).
+
+---
+
+## 12. Contribution
+
+Les contributions sont les bienvenues. Pour proposer une amélioration :
+
+1. **Forker** le dépôt et créer une branche depuis `main` :
+   ```bash
+   git checkout -b feature/nom-de-la-fonctionnalite
+   ```
+
+2. **Développer** en respectant les conventions du projet :
+   - Python : formatage `ruff`, typage strict
+   - TypeScript : `strict: true`, composants fonctionnels React
+
+3. **Tester** localement avant de soumettre :
+   ```bash
+   # Backend
+   python -m pytest tests/ -v
+
+   # Frontend
+   pnpm tsc --noEmit && pnpm build
+   ```
+
+4. **Ouvrir une Pull Request** vers `main` avec une description claire du problème résolu et de la solution apportée.
+
+5. Le CI doit passer entièrement (lint + tests + build) avant toute fusion.
+
+Pour signaler un bug ou proposer une idée, ouvrir une [issue GitHub](https://github.com/archix-239/compteur-ciment/issues).
+
+---
+
+## 13. Licence
+
+Ce projet est distribué sous licence **MIT**.
+
+```
+MIT License
+
+Copyright (c) 2024-2026 Enix
+
+Permission is hereby granted, free of charge, to any person obtaining a copy
+of this software and associated documentation files (the "Software"), to deal
+in the Software without restriction, including without limitation the rights
+to use, copy, modify, merge, publish, distribute, sublicense, and/or sell
+copies of the Software, and to permit persons to whom the Software is
+furnished to do so, subject to the following conditions:
+
+The above copyright notice and this permission notice shall be included in all
+copies or substantial portions of the Software.
+
+THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
+IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
+FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT.
+```
+
+---
+
+<p align="center">
+  Fait avec rigueur pour l'industrie — <strong>Enix</strong>
+</p>
