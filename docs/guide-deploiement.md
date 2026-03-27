@@ -278,12 +278,17 @@ Depuis `backend/` avec le venv activé :
 # Créer le répertoire de données s'il n'existe pas
 mkdir ..\data 2>$null
 
-uvicorn app.main:app --reload --host 0.0.0.0 --port 8000
+uvicorn app.main:app --reload --host 0.0.0.0 --port 8000 --env-file ../.env
 ```
+
+> **Important** : le fichier `.env` se trouve à la **racine du projet** (un niveau au-dessus de `backend/`).
+> Le flag `--env-file ../.env` est obligatoire — uvicorn ne charge pas le `.env` automatiquement.
+> Sans ce flag, le démarrage échoue avec `RuntimeError: JWT_SECRET_KEY n'est pas défini`.
 
 Sortie attendue au démarrage :
 
 ```
+INFO:     Loading environment from '../.env'
 INFO:     Will watch for changes in these directories: ['...\\backend']
 INFO:     Uvicorn running on http://0.0.0.0:8000 (Press CTRL+C to quit)
 INFO:     Started reloader process [...]
@@ -513,8 +518,12 @@ pip install -r requirements.txt
 # Depuis backend/ avec le venv activé
 mkdir -p ../data
 
-uvicorn app.main:app --reload --host 0.0.0.0 --port 8000
+uvicorn app.main:app --reload --host 0.0.0.0 --port 8000 --env-file ../.env
 ```
+
+> ⚠️ **Important** : le fichier `.env` se trouve à la **racine du projet** (un niveau au-dessus de `backend/`).
+> Le flag `--env-file ../.env` est obligatoire — uvicorn ne charge pas le `.env` automatiquement.
+> Sans ce flag, le démarrage échoue avec `RuntimeError: JWT_SECRET_KEY n'est pas défini`.
 
 Tester dans un second terminal :
 
