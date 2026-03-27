@@ -353,7 +353,9 @@ app = FastAPI(title="Cement Bag Counter API", version="1.0.0", lifespan=lifespan
 app.state.limiter = limiter
 app.add_exception_handler(RateLimitExceeded, _rate_limit_exceeded_handler)
 
-app.mount("/static", StaticFiles(directory="backend/static"), name="static")
+_STATIC_DIR = os.path.join(os.path.dirname(os.path.abspath(__file__)), "..", "static")
+os.makedirs(_STATIC_DIR, exist_ok=True)
+app.mount("/static", StaticFiles(directory=_STATIC_DIR), name="static")
 
 _allowed_origins_env = os.getenv("ALLOWED_ORIGINS", "")
 _cors_origins = [o.strip() for o in _allowed_origins_env.split(",") if o.strip()]
@@ -994,7 +996,7 @@ async def export_production_csv_legacy(period: str = "week", db: Session = Depen
 import os as _os  # noqa: E402
 from pathlib import Path as _Path  # noqa: E402
 
-_SCHED_EXPORT_DIR = _Path("backend/static/exports")
+_SCHED_EXPORT_DIR = _Path(_os.path.dirname(_os.path.abspath(__file__))) / ".." / "static" / "exports"
 _SCHED_KEYS = [
     "export_sched_enabled", "export_sched_frequency", "export_sched_time",
     "export_sched_day_of_week", "export_sched_day_of_month",
