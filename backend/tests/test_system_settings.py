@@ -1,7 +1,6 @@
 """
 Tests paramètres système — /api/system/general-settings, /api/system/security-settings
 """
-import pytest
 from tests.conftest import auth_header
 
 

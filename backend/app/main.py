@@ -14,12 +14,11 @@ import cv2
 import json
 import asyncio
 import queue
-import signal
 import logging
 import os
 from typing import List
 from pydantic import BaseModel
-from . import models, schemas, database, auth, vision_engine
+from . import models, schemas, auth, vision_engine
 from .database import engine, SessionLocal, get_db
 
 # ─── Logging structuré ────────────────────────────────────────────────────────
@@ -307,7 +306,7 @@ async def lifespan(app: FastAPI):
     _db_sess_clean = SessionLocal()
     try:
         from datetime import datetime as _dt_sess
-        _orphans = _db_sess_clean.query(models.Session).filter(models.Session.end_time == None).all()
+        _orphans = _db_sess_clean.query(models.Session).filter(models.Session.end_time.is_(None)).all()
         if _orphans:
             for _s in _orphans:
                 _s.end_time = _dt_sess.utcnow()
@@ -330,7 +329,7 @@ async def lifespan(app: FastAPI):
     _db_sess_stop = SessionLocal()
     try:
         from datetime import datetime as _dt_sess_stop
-        _open_sess = _db_sess_stop.query(models.Session).filter(models.Session.end_time == None).all()
+        _open_sess = _db_sess_stop.query(models.Session).filter(models.Session.end_time.is_(None)).all()
         if _open_sess:
             for _s in _open_sess:
                 _s.end_time = _dt_sess_stop.utcnow()
@@ -427,7 +426,7 @@ async def root():
 
 
 # ─── Health check (utilisé par Docker healthcheck) ────────────────────────────
-from sqlalchemy import text as _sa_text_health
+from sqlalchemy import text as _sa_text_health  # noqa: E402
 
 @app.get("/api/health")
 async def health_check(db: Session = Depends(get_db)):
@@ -549,15 +548,15 @@ async def get_production_report(period: str = "week", db: Session = Depends(get_
         .order_by(models.DetectionLog.timestamp.asc())
         .all()
     )
-    conforming = [l for l in logs if l.status == "conforme"]
-    rejected   = [l for l in logs if l.status == "rejete"]
+    conforming = [log for log in logs if log.status == "conforme"]
+    rejected   = [log for log in logs if log.status == "rejete"]
     total_bags     = len(conforming)
     rejected_count = len(rejected)
     total_inspected = total_bags + rejected_count
 
     detection_rate = round((total_bags / total_inspected * 100) if total_inspected > 0 else 100.0, 1)
 
-    all_ts = sorted(ts for l in conforming if (ts := _to_dt(l.timestamp)) is not None)
+    all_ts = sorted(ts for log in conforming if (ts := _to_dt(log.timestamp)) is not None)
     intervals: list[float] = []
     for i in range(1, len(all_ts)):
         d = (all_ts[i] - all_ts[i - 1]).total_seconds()
@@ -570,15 +569,15 @@ async def get_production_report(period: str = "week", db: Session = Depends(get_
         models.DetectionLog.timestamp >= prev_start,
         models.DetectionLog.timestamp < start,
     ).all()
-    prev_conforming = [l for l in prev_logs if l.status == "conforme"]
+    prev_conforming = [log for log in prev_logs if log.status == "conforme"]
     prev_total      = len(prev_conforming)
-    prev_rejected   = len([l for l in prev_logs if l.status == "rejete"])
+    prev_rejected   = len([log for log in prev_logs if log.status == "rejete"])
     prev_inspected  = prev_total + prev_rejected
     prev_detection_rate = round(
         (prev_total / prev_inspected * 100) if prev_inspected > 0 else 100.0, 1
     )
 
-    prev_ts = sorted(ts for l in prev_conforming if (ts := _to_dt(l.timestamp)) is not None)
+    prev_ts = sorted(ts for log in prev_conforming if (ts := _to_dt(log.timestamp)) is not None)
     prev_intervals: list[float] = []
     for i in range(1, len(prev_ts)):
         d = (prev_ts[i] - prev_ts[i - 1]).total_seconds()
@@ -658,12 +657,12 @@ async def get_production_report(period: str = "week", db: Session = Depends(get_
             label = b_start.strftime("%H:%M")
 
         cur_count = sum(
-            1 for l in conforming
-            if (ts := _to_dt(l.timestamp)) and b_start <= ts < b_end
+            1 for log in conforming
+            if (ts := _to_dt(log.timestamp)) and b_start <= ts < b_end
         )
         prv_count = sum(
-            1 for l in prev_conforming
-            if (ts := _to_dt(l.timestamp)) and pb_start <= ts < pb_end
+            1 for log in prev_conforming
+            if (ts := _to_dt(log.timestamp)) and pb_start <= ts < pb_end
         )
         trend_data.append({"day": label, "current": cur_count, "previous": prv_count})
 
@@ -772,7 +771,9 @@ async def export_data(
     """Export data as CSV or JSON. Sources: counts | sessions | anomalies | quality."""
     from datetime import datetime as _dt
     from fastapi.responses import StreamingResponse
-    import csv as _csv, io as _io, json as _json
+    import csv as _csv
+    import io as _io
+    import json as _json
 
     start, end, period_label = _export_period_range(period, date_from, date_to)
     ts_now = _dt.utcnow().strftime("%Y%m%d_%H%M%S")
@@ -792,10 +793,10 @@ async def export_data(
                   .order_by(models.DetectionLog.timestamp.asc()).all())
         headers = ["ID", "Timestamp", "Session", "Statut", "Identifiant",
                    "Score Détection", "Score Logo", "Score Couleur", "Intervalle (s)", "Capture URL"]
-        rows = [[l.id, _ts(l.timestamp), l.session_id, l.status, l.identifier or "",
-                 round(l.detection_score or 0, 4), round(l.logo_score or 0, 4),
-                 round(l.color_score or 0, 4), round(l.interval or 0, 3), l.capture_url or ""]
-                for l in rows_q]
+        rows = [[rec.id, _ts(rec.timestamp), rec.session_id, rec.status, rec.identifier or "",
+                 round(rec.detection_score or 0, 4), round(rec.logo_score or 0, 4),
+                 round(rec.color_score or 0, 4), round(rec.interval or 0, 3), rec.capture_url or ""]
+                for rec in rows_q]
         fname_base = f"comptage_{period}_{ts_now}"
     elif source == "sessions":
         rows_q = (db.query(models.Session)
@@ -990,8 +991,8 @@ async def export_production_csv_legacy(period: str = "week", db: Session = Depen
 
 
 # ─── Scheduled Exports ───────────────────────────────────────────────────────
-import os as _os
-from pathlib import Path as _Path
+import os as _os  # noqa: E402
+from pathlib import Path as _Path  # noqa: E402
 
 _SCHED_EXPORT_DIR = _Path("backend/static/exports")
 _SCHED_KEYS = [
@@ -1060,7 +1061,9 @@ def _save_sched_config(db, payload: dict):
 def _do_scheduled_export(cfg: dict):
     """Build export bytes and save to SCHED_EXPORT_DIR. Returns filename."""
     from datetime import datetime as _dt
-    import csv as _csv, io as _io, json as _json
+    import csv as _csv
+    import io as _io
+    import json as _json
 
     _SCHED_EXPORT_DIR.mkdir(parents=True, exist_ok=True)
     source = cfg["source"]
@@ -1086,10 +1089,10 @@ def _do_scheduled_export(cfg: dict):
                       .order_by(models.DetectionLog.timestamp.asc()).all())
             headers = ["ID", "Timestamp", "Session", "Statut", "Identifiant",
                        "Score Détection", "Score Logo", "Score Couleur", "Intervalle (s)", "Capture URL"]
-            rows = [[l.id, _ts(l.timestamp), l.session_id, l.status, l.identifier or "",
-                     round(l.detection_score or 0, 4), round(l.logo_score or 0, 4),
-                     round(l.color_score or 0, 4), round(l.interval or 0, 3), l.capture_url or ""]
-                    for l in rows_q]
+            rows = [[rec.id, _ts(rec.timestamp), rec.session_id, rec.status, rec.identifier or "",
+                     round(rec.detection_score or 0, 4), round(rec.logo_score or 0, 4),
+                     round(rec.color_score or 0, 4), round(rec.interval or 0, 3), rec.capture_url or ""]
+                    for rec in rows_q]
             fname_base = f"auto_comptage_{period}_{ts_now}"
         elif source == "sessions":
             rows_q = (db.query(models.Session)
@@ -1546,7 +1549,6 @@ async def get_logs(
 
 
 # ─── Users ────────────────────────────────────────────────────────────────────
-import datetime as _dt_users
 
 def _user_to_dict(u: models.User) -> dict:
     return {
@@ -1866,7 +1868,6 @@ _net_snapshot: dict = {"time": 0.0, "bytes_recv": 0, "bytes_sent": 0}
 async def get_system_health(db: Session = Depends(get_db)):
     import psutil as _ps
     import time as _time
-    import os as _os
     global _net_snapshot
 
     # ── Hardware ──────────────────────────────────────────────────────────────
@@ -1922,7 +1923,7 @@ async def get_system_health(db: Session = Depends(get_db)):
     total_sessions = db.query(models.Session).count()
     active_sess    = db.query(models.Session).filter(models.Session.status == "active").count()
     total_alerts   = db.query(models.AlertHistory).count()
-    unread_alerts  = db.query(models.AlertHistory).filter(models.AlertHistory.is_read == False).count()
+    unread_alerts  = db.query(models.AlertHistory).filter(~models.AlertHistory.is_read).count()
 
     # ── Services ──────────────────────────────────────────────────────────────
     services = [
@@ -2049,7 +2050,7 @@ def _alert_to_dict(alert: models.AlertHistory, rule: models.AlertRule | None = N
 async def get_alert_history(limit: int = 50, unread_only: bool = False, db: Session = Depends(get_db)):
     query = db.query(models.AlertHistory)
     if unread_only:
-        query = query.filter(models.AlertHistory.is_read == False)
+        query = query.filter(~models.AlertHistory.is_read)
     alerts = query.order_by(models.AlertHistory.timestamp.desc()).limit(limit).all()
     rules_map = {r.id: r for r in db.query(models.AlertRule).all()}
     return [_alert_to_dict(a, rules_map.get(a.rule_id)) for a in alerts]
@@ -2057,7 +2058,7 @@ async def get_alert_history(limit: int = 50, unread_only: bool = False, db: Sess
 
 @app.get("/api/alerts/unread-count")
 async def get_alert_unread_count(db: Session = Depends(get_db)):
-    count = db.query(models.AlertHistory).filter(models.AlertHistory.is_read == False).count()
+    count = db.query(models.AlertHistory).filter(~models.AlertHistory.is_read).count()
     return {"count": count}
 
 
@@ -2098,7 +2099,7 @@ async def mark_alert_read(alert_id: int, db: Session = Depends(get_db)):
 @app.post("/api/alerts/history/read-all")
 async def mark_all_alerts_read(db: Session = Depends(get_db)):
     db.query(models.AlertHistory).filter(
-        models.AlertHistory.is_read == False
+        ~models.AlertHistory.is_read
     ).update({"is_read": True})
     db.commit()
     return {"ok": True}
@@ -2186,7 +2187,7 @@ async def evaluate_alert_rules(db: Session = Depends(get_db)):
     window_5m = now - _dt.timedelta(minutes=5)
     window_10m = now - _dt.timedelta(minutes=10)
 
-    rules = db.query(models.AlertRule).filter(models.AlertRule.is_active == True).all()
+    rules = db.query(models.AlertRule).filter(models.AlertRule.is_active).all()
     triggered = []
 
     for rule in rules:
@@ -2444,7 +2445,6 @@ async def download_db_backup(
     """Télécharge la base SQLite (admin uniquement)."""
     if current_user.role != "admin":
         raise HTTPException(status_code=403, detail="Réservé aux administrateurs.")
-    import os as _os
     from fastapi.responses import FileResponse as _FR
     db_path = _os.path.abspath(
         _os.path.join(_os.path.dirname(__file__), "..", "production.db")
@@ -2513,8 +2513,8 @@ async def get_audit_trail(
 
 
 # ─── API Keys ─────────────────────────────────────────────────────────────────
-import secrets as _secrets
-import hashlib as _hashlib
+import secrets as _secrets  # noqa: E402
+import hashlib as _hashlib  # noqa: E402
 
 def _hash_key(raw_key: str) -> str:
     return _hashlib.sha256(raw_key.encode()).hexdigest()
@@ -2528,7 +2528,7 @@ async def list_api_keys(
     current_user: models.User = Depends(auth.get_current_user),
     db: Session = Depends(get_db),
 ):
-    keys = db.query(models.ApiKey).filter(models.ApiKey.is_active == True).order_by(models.ApiKey.created_at.desc()).all()
+    keys = db.query(models.ApiKey).filter(models.ApiKey.is_active).order_by(models.ApiKey.created_at.desc()).all()
     return [
         {
             "id": k.id,
@@ -2648,10 +2648,14 @@ def _send_email(smtp_cfg: dict, to: str, subject: str, body: str, attachment_pat
         p = _P(attachment_path)
         if p.exists():
             ctype = "application/octet-stream"
-            if p.suffix == ".csv":   ctype = "text/csv"
-            elif p.suffix == ".xlsx": ctype = "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
-            elif p.suffix == ".pdf":  ctype = "application/pdf"
-            elif p.suffix == ".json": ctype = "application/json"
+            if p.suffix == ".csv":
+                ctype = "text/csv"
+            elif p.suffix == ".xlsx":
+                ctype = "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
+            elif p.suffix == ".pdf":
+                ctype = "application/pdf"
+            elif p.suffix == ".json":
+                ctype = "application/json"
             maintype, subtype = ctype.split("/", 1)
             msg.add_attachment(p.read_bytes(), maintype=maintype, subtype=subtype, filename=p.name)
 
@@ -2869,8 +2873,8 @@ async def get_oee_analytics(hours: int = 24, db: Session = Depends(get_db)):
         .order_by(models.DetectionLog.timestamp.asc())
         .all()
     )
-    conforming = [l for l in logs if l.status == "conforme"]
-    rejected   = [l for l in logs if l.status == "rejete"]
+    conforming = [log for log in logs if log.status == "conforme"]
+    rejected   = [log for log in logs if log.status == "rejete"]
     total_bags     = len(conforming)
     rejected_count = len(rejected)
     total_inspected = total_bags + rejected_count
@@ -2911,9 +2915,9 @@ async def get_oee_analytics(hours: int = 24, db: Session = Depends(get_db)):
         models.DetectionLog.timestamp >= prev_start,
         models.DetectionLog.timestamp < start,
     ).all()
-    prev_conforming = [l for l in prev_logs if l.status == "conforme"]
+    prev_conforming = [log for log in prev_logs if log.status == "conforme"]
     prev_total      = len(prev_conforming)
-    prev_inspected  = prev_total + len([l for l in prev_logs if l.status == "rejete"])
+    prev_inspected  = prev_total + len([log for log in prev_logs if log.status == "rejete"])
 
     prev_sessions = db.query(models.Session).filter(
         models.Session.start_time >= prev_start,
@@ -2959,8 +2963,8 @@ async def get_oee_analytics(hours: int = 24, db: Session = Depends(get_db)):
             label = b_start.strftime("%H:%M")
 
         b_count = sum(
-            1 for l in conforming
-            if _to_dt(l.timestamp) and b_start <= _to_dt(l.timestamp) < b_end
+            1 for log in conforming
+            if _to_dt(log.timestamp) and b_start <= _to_dt(log.timestamp) < b_end
         )
         hourly_data.append({"name": label, "real": b_count, "target": TARGET_RATE, "forecast": 0})
 
@@ -2970,7 +2974,7 @@ async def get_oee_analytics(hours: int = 24, db: Session = Depends(get_db)):
         h["forecast"] = round(sum(prev_vals) / len(prev_vals)) if prev_vals else h["real"]
 
     # ── Downtime distribution ───────────────────────────────────────────────
-    all_ts = sorted(ts for l in logs if (ts := _to_dt(l.timestamp)) is not None)
+    all_ts = sorted(ts for log in logs if (ts := _to_dt(log.timestamp)) is not None)
 
     production_secs    = 0.0
     micro_stops_secs   = 0.0
@@ -3080,16 +3084,16 @@ async def get_oee_analytics(hours: int = 24, db: Session = Depends(get_db)):
 async def get_quality_summary(db: Session = Depends(get_db)):
     logs = db.query(models.DetectionLog).all()
     total = len(logs)
-    rejected = len([l for l in logs if l.status == "rejete"])
+    rejected = len([log for log in logs if log.status == "rejete"])
     rejection_rate = (rejected / total * 100) if total > 0 else 0
 
-    avg_logo = sum((l.logo_score or 0) for l in logs) / total if total else 0
-    avg_color = sum((l.color_score or 0) for l in logs) / total if total else 0
-    avg_detect = sum((l.detection_score or 0) for l in logs) / total if total else 0
+    avg_logo = sum((log.logo_score or 0) for log in logs) / total if total else 0
+    avg_color = sum((log.color_score or 0) for log in logs) / total if total else 0
+    avg_detect = sum((log.detection_score or 0) for log in logs) / total if total else 0
 
     bins = {"0-20%": 0, "20-40%": 0, "40-60%": 0, "60-80%": 0, "80-100%": 0}
-    for l in logs:
-        v = (l.detection_score or 0) * 100
+    for log in logs:
+        v = (log.detection_score or 0) * 100
         if v < 20:
             bins["0-20%"] += 1
         elif v < 40:
@@ -3101,9 +3105,9 @@ async def get_quality_summary(db: Session = Depends(get_db)):
         else:
             bins["80-100%"] += 1
 
-    logo_conforme = len([l for l in logs if (l.logo_score or 0) >= 0.8])
-    logo_flou = len([l for l in logs if 0.5 <= (l.logo_score or 0) < 0.8])
-    logo_absent = len([l for l in logs if (l.logo_score or 0) < 0.5])
+    logo_conforme = len([log for log in logs if (log.logo_score or 0) >= 0.8])
+    logo_flou = len([log for log in logs if 0.5 <= (log.logo_score or 0) < 0.8])
+    logo_absent = len([log for log in logs if (log.logo_score or 0) < 0.5])
     reviews_count = db.query(models.QualityReview).count()
     recent_errors = db.query(models.DetectionLog).filter(
         models.DetectionLog.status == "rejete",
@@ -3153,19 +3157,19 @@ async def get_manual_verification_queue(
     items = query.order_by(models.DetectionLog.timestamp.desc()).offset((page - 1) * page_size).limit(page_size).all()
 
     mapped = []
-    for l in items:
-        reason = "Non conforme" if l.status == "rejete" else "Confiance faible"
+    for log in items:
+        reason = "Non conforme" if log.status == "rejete" else "Confiance faible"
         mapped.append({
-            "id": l.id,
-            "timestamp": l.timestamp,
-            "session_id": l.session_id,
-            "identifier": l.identifier,
-            "detection_score": l.detection_score,
-            "logo_score": l.logo_score,
-            "color_score": l.color_score,
-            "interval": l.interval,
-            "capture_url": l.capture_url,
-            "status": l.status,
+            "id": log.id,
+            "timestamp": log.timestamp,
+            "session_id": log.session_id,
+            "identifier": log.identifier,
+            "detection_score": log.detection_score,
+            "logo_score": log.logo_score,
+            "color_score": log.color_score,
+            "interval": log.interval,
+            "capture_url": log.capture_url,
+            "status": log.status,
             "reason": reason,
             "reviewed": False,
         })
@@ -3181,21 +3185,21 @@ async def get_quality_reviews(limit: int = 50, db: Session = Depends(get_db)):
 async def get_quality_anomalies(limit: int = 50, db: Session = Depends(get_db)):
     logs = db.query(models.DetectionLog).order_by(models.DetectionLog.timestamp.desc()).limit(limit).all()
     items = []
-    for l in logs:
-        is_low_conf = (l.detection_score or 0) < 0.6
-        is_reject = l.status == "rejete"
+    for log in logs:
+        is_low_conf = (log.detection_score or 0) < 0.6
+        is_reject = log.status == "rejete"
         if not is_low_conf and not is_reject:
             continue
-        if getattr(l, "is_resolved", False):
+        if getattr(log, "is_resolved", False):
             continue
-        severity = "high" if (l.detection_score or 0) < 0.5 or is_reject else "medium"
+        severity = "high" if (log.detection_score or 0) < 0.5 or is_reject else "medium"
         items.append({
-            "id": f"AN-{l.id}",
+            "id": f"AN-{log.id}",
             "type": "Sac rejeté" if is_reject else "Confiance faible",
-            "time": l.timestamp.strftime("%H:%M:%S"),
+            "time": log.timestamp.strftime("%H:%M:%S"),
             "severity": severity,
-            "description": f"Score détection {l.detection_score:.2f}, logo {l.logo_score:.2f}, couleur {l.color_score:.2f}",
-            "thumbnail": f"/static/captures/{l.capture_url.split('/')[-1]}" if l.capture_url else None,
+            "description": f"Score détection {log.detection_score:.2f}, logo {log.logo_score:.2f}, couleur {log.color_score:.2f}",
+            "thumbnail": f"/static/captures/{log.capture_url.split('/')[-1]}" if log.capture_url else None,
             "status": "pending",
         })
     return {"items": items, "total": len(items)}
@@ -3359,7 +3363,6 @@ def _test_camera_sync(config: schemas.CameraConfig) -> dict:
     If the tested source matches the running vision engine source,
     temporarily stop the engine to avoid webcam access conflicts on Windows.
     """
-    import os as _os
     import sys as _sys
 
     if config.source_type == "webcam":
@@ -3428,7 +3431,6 @@ def _test_camera_sync(config: schemas.CameraConfig) -> dict:
 @app.get("/api/models/list")
 async def list_available_models():
     """Liste les fichiers .pt disponibles dans le dossier models/."""
-    import os as _os
     models_dir = "models"
     v_engine = vision_engine.get_vision_engine()
     active_path = v_engine.model_path
@@ -3455,7 +3457,6 @@ async def list_available_models():
 @app.post("/api/models/activate")
 async def activate_model(payload: dict, db: Session = Depends(get_db)):
     """Bascule le modèle actif sur le chemin fourni et l'applique à chaud."""
-    import os as _os
     model_path = (payload.get("model_path") or "").strip()
     if not model_path:
         raise HTTPException(status_code=400, detail="model_path requis")
@@ -3479,7 +3480,6 @@ _TEMPLATE_MAX_SIZE_MB = 10
 @app.post("/api/models/upload")
 async def upload_model(file: UploadFile = File(...)):
     """Reçoit un fichier .pt et le sauvegarde dans le dossier models/."""
-    import os as _os
     if not file.filename or not file.filename.lower().endswith(".pt"):
         raise HTTPException(status_code=400, detail="Seuls les fichiers .pt sont acceptés.")
     safe_name = _os.path.basename(file.filename)
@@ -3500,7 +3500,6 @@ async def upload_model(file: UploadFile = File(...)):
 @app.delete("/api/models/{filename}")
 async def delete_model(filename: str):
     """Supprime un fichier .pt du dossier models/. Refuse si c'est le modèle actif."""
-    import os as _os
     safe_name = _os.path.basename(filename)
     if not safe_name.endswith(".pt"):
         raise HTTPException(status_code=400, detail="Seuls les fichiers .pt peuvent être supprimés.")
@@ -3849,9 +3848,9 @@ _DB_PATH = "./cement_counter.db"
 @app.get("/api/database/stats")
 async def get_database_stats(db: Session = Depends(get_db)):
     """Real per-table stats + DB health (size, fragmentation, integrity)."""
-    import os as _os, time as _time, psutil as _psutil
+    import time as _time
+    import psutil as _psutil
     from sqlalchemy import text
-    from datetime import datetime as _dt
 
     # ── File size ─────────────────────────────────────────────────────────────
     db_size_bytes = _os.path.getsize(_DB_PATH) if _os.path.exists(_DB_PATH) else 0
@@ -3946,7 +3945,8 @@ async def get_database_stats(db: Session = Depends(get_db)):
 @app.post("/api/database/optimize")
 async def optimize_database():
     """Run VACUUM + ANALYZE to compact the DB and refresh query planner stats."""
-    import os as _os, time as _time, sqlite3 as _sqlite3
+    import time as _time
+    import sqlite3 as _sqlite3
     from sqlalchemy import text, create_engine as _ce
 
     size_before = _os.path.getsize(_DB_PATH) if _os.path.exists(_DB_PATH) else 0
@@ -3981,7 +3981,8 @@ async def optimize_database():
 @app.post("/api/database/reindex")
 async def reindex_database():
     """Rebuild all SQLite indexes."""
-    import time as _time, sqlite3 as _sqlite3
+    import time as _time
+    import sqlite3 as _sqlite3
 
     t0 = _time.perf_counter()
     _con = _sqlite3.connect(_DB_PATH, isolation_level=None)
@@ -3995,7 +3996,6 @@ async def reindex_database():
 @app.get("/api/database/backup")
 async def backup_database():
     """Stream the SQLite .db file as a direct download."""
-    import os as _os
     from datetime import datetime as _dt
     from fastapi.responses import FileResponse
 
@@ -4051,7 +4051,6 @@ async def archive_old_sessions(payload: dict = None, db: Session = Depends(get_d
 @app.post("/api/database/purge")
 async def purge_old_logs(payload: dict = None, db: Session = Depends(get_db)):
     """Hard-delete detection logs (+ their quality reviews) older than N days."""
-    import os as _os
     from datetime import datetime as _dt, timedelta as _td
 
     days   = int((payload or {}).get("days", 90))
@@ -4107,7 +4106,7 @@ async def purge_old_logs(payload: dict = None, db: Session = Depends(get_db)):
 @app.get("/api/diagnostics/metrics")
 async def get_diagnostic_metrics(db: Session = Depends(get_db)):
     """Real-time diagnostic KPIs: FPS, inference latency, precision, CPU/RAM."""
-    import psutil as _psutil, time as _time
+    import psutil as _psutil
     from datetime import datetime as _dt, timedelta as _td
 
     v_eng        = vision_engine.get_vision_engine()
@@ -4144,7 +4143,6 @@ async def get_diagnostic_metrics(db: Session = Depends(get_db)):
         )
         if rows:
             avg_iv  = sum(r[0] for r in rows) / len(rows)
-            fps_est = 1.0 / avg_iv if avg_iv > 0 else 0
             # Estimate: inference takes ~10% of inter-bag interval when running at full speed
             inference_ms = round(min(avg_iv * 1000 * 0.1, 999), 1)
 
@@ -4239,7 +4237,8 @@ async def download_diagnostic_logs(db: Session = Depends(get_db)):
 @app.post("/api/diagnostics/run-tests")
 async def run_diagnostic_tests(payload: dict = None, db: Session = Depends(get_db)):
     """Run real component tests. Optional body: {"test": "yolo|db|disk|api|camera"}."""
-    import time as _time, os as _os, tempfile as _tmp
+    import time as _time
+    import tempfile as _tmp
     from datetime import datetime as _dt
 
     only = (payload or {}).get("test")  # if set, run only this test key
@@ -4292,7 +4291,8 @@ async def run_diagnostic_tests(payload: dict = None, db: Session = Depends(get_d
             buf = b"\x00" * (1024 * 1024)
             try:
                 with _tmp.NamedTemporaryFile(delete=False, suffix=".tmp") as f:
-                    fname = f.name; f.write(buf)
+                    fname = f.name
+                    f.write(buf)
                 elapsed = _time.perf_counter() - t0
                 _os.remove(fname)
                 speed = round(1.0 / elapsed, 1)
@@ -4348,7 +4348,7 @@ async def run_diagnostic_tests(payload: dict = None, db: Session = Depends(get_d
                 }
 
             # Build a minimal CameraConfig-like object and call _test_camera_sync
-            import importlib as _imp, time as _time2
+            import time as _time2
             cam_config_obj = type("CC", (), {"source_type": src_type, "url": cam_url})()
             t0 = _time2.perf_counter()
             try:
@@ -4387,7 +4387,7 @@ async def run_diagnostic_tests(payload: dict = None, db: Session = Depends(get_d
 @app.post("/api/diagnostics/benchmark")
 async def run_ia_benchmark():
     """Quick IA benchmark: 20 inferences on a blank frame."""
-    import time as _time, os as _os
+    import time as _time
     import numpy as _np
 
     v_eng = vision_engine.get_vision_engine()
@@ -4427,9 +4427,9 @@ async def run_ia_benchmark():
 
 
 # ─── Template & Colour Configuration ─────────────────────────────────────────
-import json as _json_tmpl_ep
-import colorsys as _colorsys
-import os as _os_tmpl
+import json as _json_tmpl_ep  # noqa: E402
+import colorsys as _colorsys  # noqa: E402
+import os as _os_tmpl  # noqa: E402
 
 _TEMPLATES_DIR = _os_tmpl.path.normpath(
     _os_tmpl.path.join(_os_tmpl.path.dirname(_os_tmpl.path.abspath(__file__)), "..", "static", "templates")
@@ -4627,7 +4627,8 @@ async def update_color_ref(idx: int, body: dict, db: Session = Depends(get_db)):
     refs = _json_tmpl_ep.loads(_get_setting(db, "template_colors", "[]"))
     if idx < 0 or idx >= len(refs):
         raise HTTPException(status_code=404, detail="Référence couleur introuvable.")
-    if "name"      in body: refs[idx]["name"]      = body["name"]
+    if "name" in body:
+        refs[idx]["name"] = body["name"]
     if "tolerance" in body:
         tol = int(body["tolerance"])
         refs[idx]["tolerance"] = tol
@@ -4662,7 +4663,7 @@ async def delete_color_ref(idx: int, db: Session = Depends(get_db)):
 
 
 # ─── Device Management ────────────────────────────────────────────────────────
-import datetime as _dt_dev
+import datetime as _dt_dev  # noqa: E402
 
 def _cam_to_dict(c: models.Camera) -> dict:
     return {

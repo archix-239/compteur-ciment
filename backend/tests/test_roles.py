@@ -1,7 +1,6 @@
 """
 Tests endpoints rôles — /api/roles/
 """
-import pytest
 from tests.conftest import auth_header
 
 
@@ -69,7 +68,7 @@ class TestCreateRole:
 class TestDeleteRole:
     def test_delete_builtin_role_forbidden(self, client, admin_token, db):
         from app import models
-        builtin = db.query(models.Role).filter(models.Role.is_builtin == True).first()
+        builtin = db.query(models.Role).filter(models.Role.is_builtin).first()
         if builtin:
             response = client.delete(f"/api/roles/{builtin.id}", headers=auth_header(admin_token))
             assert response.status_code == 400

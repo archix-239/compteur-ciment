@@ -1,7 +1,6 @@
 """
 Tests d'authentification — POST /token, GET /api/users/me
 """
-import pytest
 from tests.conftest import auth_header
 
 
@@ -31,7 +30,6 @@ class TestLogin:
         assert response.status_code == 401
 
     def test_login_inactive_user(self, client, db, admin_user):
-        from app import models
         admin_user.is_active = False
         db.commit()
         response = client.post(

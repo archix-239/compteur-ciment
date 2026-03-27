@@ -6,11 +6,9 @@ import base64
 import numpy as np
 from ultralytics import YOLO
 from collections import defaultdict
-from pyzbar.pyzbar import decode as qr_decode
 from datetime import datetime
 import os
 import sys
-import signal
 
 logger = logging.getLogger("ciment.vision")
 

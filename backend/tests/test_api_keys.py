@@ -1,7 +1,6 @@
 """
 Tests gestion des clés API — /api/apikeys/
 """
-import pytest
 from tests.conftest import auth_header
 
 

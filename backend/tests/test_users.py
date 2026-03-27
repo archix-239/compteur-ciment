@@ -2,7 +2,6 @@
 Tests endpoints utilisateurs — /api/users/
 Vérifie l'authentification, les permissions admin, le CRUD.
 """
-import pytest
 from tests.conftest import auth_header
 
 
