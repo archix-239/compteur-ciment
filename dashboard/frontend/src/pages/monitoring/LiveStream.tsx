@@ -1,5 +1,5 @@
 import { useState, useEffect, useRef } from 'react';
-import { API_URL, WS_URL } from '@/lib/api';
+import { API_URL, WS_URL, fetchApi } from '@/lib/api';
 import { useVideoStream } from '@/hooks/useVideoStream';
 import { Camera, Activity, AlertCircle, Maximize2, RefreshCcw, AlertOctagon, Zap, Bell, Loader2, PauseCircle } from 'lucide-react';
 import { Card } from '@/components/ui/card';
@@ -48,8 +48,7 @@ export default function LiveStream() {
 
   useEffect(() => {
     // Load counts from the active session (or the last completed one — NOT all-time totals)
-    fetch(`${API_URL}/sessions/active`)
-      .then(res => res.json())
+    fetchApi('/sessions/active')
       .then(session => {
         if (session) {
           setSessionActive(true);
@@ -62,8 +61,7 @@ export default function LiveStream() {
         } else {
           setSessionActive(false);
           // Show counts from the last completed session, not the all-time DB total
-          fetch(`${API_URL}/sessions/?page=1&page_size=1`)
-            .then(r => r.json())
+          fetchApi('/sessions/?page=1&page_size=1')
             .then(data => {
               const last = data.items?.[0];
               setStats(prev => ({
@@ -79,17 +77,15 @@ export default function LiveStream() {
 
     // ── Alertes récentes ────────────────────────────────────────────────────
     const loadAlerts = () => {
-      fetch(`${API_URL}/api/alerts/history?limit=3`)
-        .then(r => r.json())
-        .then(data => { setRecentAlerts(data); setAlertsLoading(false); })
+      fetchApi('/api/alerts/history?limit=3')
+        .then(data => { setRecentAlerts(Array.isArray(data) ? data : (data.items ?? [])); setAlertsLoading(false); })
         .catch(() => setAlertsLoading(false));
     };
     loadAlerts();
     const alertsTimer = setInterval(loadAlerts, 30_000);
 
     const loadRuntime = () => {
-      fetch(`${API_URL}/api/config/runtime`)
-        .then((r) => r.json())
+      fetchApi('/api/config/runtime')
         .then(setRuntime)
         .catch(() => {});
     };
@@ -97,8 +93,7 @@ export default function LiveStream() {
     const runtimeTimer = setInterval(loadRuntime, 3000);
 
     const loadSession = () => {
-      fetch(`${API_URL}/sessions/active`)
-        .then((r) => r.json())
+      fetchApi('/sessions/active')
         .then((s) => {
           if (!s) {
             setSessionActive(false);
