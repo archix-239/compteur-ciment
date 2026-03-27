@@ -141,6 +141,9 @@ async def lifespan(app: FastAPI):
     global _main_loop
     _main_loop = asyncio.get_running_loop()
 
+    # Ensure all tables exist (idempotent — safe to call every startup)
+    models.Base.metadata.create_all(bind=engine)
+
     # Load camera config from DB and apply to engine
     db = SessionLocal()
     try:

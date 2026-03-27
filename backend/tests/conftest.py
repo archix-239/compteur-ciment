@@ -12,6 +12,7 @@ from sqlalchemy.orm import sessionmaker
 os.environ.setdefault("DATABASE_URL", "sqlite:///:memory:")
 os.environ.setdefault("JWT_SECRET_KEY", "test_secret_key_not_for_production_32chars")
 os.environ.setdefault("ALLOWED_ORIGINS", "http://localhost:3000")
+os.environ.setdefault("DEFAULT_ADMIN_PASSWORD", "Ciment_CI_Test_2024!")
 
 from app.database import Base, get_db  # noqa: E402 — doit venir après les env vars
 from app import models, auth  # noqa: E402

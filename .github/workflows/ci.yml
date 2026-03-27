@@ -49,6 +49,7 @@ jobs:
           DATABASE_URL: "sqlite:///:memory:"
           JWT_SECRET_KEY: "ci_test_secret_key_at_least_32_chars_long"
           ALLOWED_ORIGINS: "http://localhost:3000"
+          DEFAULT_ADMIN_PASSWORD: "Ciment_CI_Test_2024!"
           PYTHONPATH: "${{ github.workspace }}/backend"
         run: |
           pytest tests/ -v --tb=short --junitxml=test-results.xml
