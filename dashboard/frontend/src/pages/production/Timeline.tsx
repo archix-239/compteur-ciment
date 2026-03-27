@@ -26,7 +26,7 @@ import {
   Legend,
   Area,
 } from 'recharts';
-import { API_URL } from '@/lib/api';
+import { fetchApi } from '@/lib/api';
 
 // ── Types ─────────────────────────────────────────────────────────────────────
 
@@ -70,10 +70,8 @@ export default function Timeline() {
   const loadData = useCallback(async (hours: number) => {
     setLoading(true);
     try {
-      const res = await fetch(`${API_URL}/api/timeline/hourly?hours=${hours}`);
-      if (res.ok) {
-        setSummary(await res.json() as TimelineSummary);
-      }
+      const data = await fetchApi(`/api/timeline/hourly?hours=${hours}`);
+      setSummary(data as TimelineSummary);
     } catch (e) {
       console.error('Timeline fetch error:', e);
     } finally {

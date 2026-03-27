@@ -11,7 +11,7 @@ import { Avatar, AvatarFallback } from '@/components/ui/avatar';
 import { Badge } from '@/components/ui/badge';
 import { useAuth } from '@/contexts/AuthContext';
 import { useLocation } from 'wouter';
-import { API_URL, getToken } from '@/lib/api';
+import { fetchApi } from '@/lib/api';
 
 const ROLE_LABELS: Record<string, string> = {
   admin: 'Administrateur', operator: 'Opérateur', viewer: 'Observateur',
@@ -57,13 +57,11 @@ export default function Profile() {
     if (!fullName.trim()) { showFlash('Le nom ne peut pas être vide.', false); return; }
     setSaving(true);
     try {
-      const res = await fetch(`${API_URL}/api/users/${user.id}`, {
+      await fetchApi(`/api/users/${user.id}`, {
         method: 'PUT',
-        headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${getToken()}` },
         body: JSON.stringify({ full_name: fullName.trim() }),
       });
-      if (res.ok) showFlash('Profil mis à jour.');
-      else showFlash('Erreur lors de la sauvegarde.', false);
+      showFlash('Profil mis à jour.');
     } catch {
       showFlash('Erreur réseau.', false);
     } finally {
@@ -79,18 +77,12 @@ export default function Profile() {
     if (newPwd !== confPwd) { showFlash('Les mots de passe ne correspondent pas.', false); return; }
     setPwdSaving(true);
     try {
-      const res = await fetch(`${API_URL}/api/users/me/password`, {
+      await fetchApi('/api/users/me/password', {
         method: 'PATCH',
-        headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${getToken()}` },
         body: JSON.stringify({ current_password: curPwd, new_password: newPwd }),
       });
-      if (res.ok) {
-        showFlash('Mot de passe modifié avec succès.');
-        setCurPwd(''); setNewPwd(''); setConfPwd('');
-      } else {
-        const err = await res.json().catch(() => ({}));
-        showFlash((err as { detail?: string }).detail ?? 'Erreur.', false);
-      }
+      showFlash('Mot de passe modifié avec succès.');
+      setCurPwd(''); setNewPwd(''); setConfPwd('');
     } catch {
       showFlash('Erreur réseau.', false);
     } finally {

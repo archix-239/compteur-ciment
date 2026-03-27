@@ -13,7 +13,7 @@ import {
 import {
   Select, SelectContent, SelectItem, SelectTrigger, SelectValue,
 } from '@/components/ui/select';
-import { API_URL, getToken } from '@/lib/api';
+import { fetchApi } from '@/lib/api';
 
 // ── Types ──────────────────────────────────────────────────────────────────────
 
@@ -90,10 +90,8 @@ export default function AuditTrail() {
       });
       if (uname.trim()) params.set('username', uname.trim());
       if (action !== 'all') params.set('action', action);
-      const res = await fetch(`${API_URL}/api/audit/?${params}`, {
-        headers: { Authorization: `Bearer ${getToken()}` },
-      });
-      if (res.ok) setData(await res.json());
+      const d = await fetchApi(`/api/audit/?${params}`);
+      setData(d);
     } catch { /* silent */ }
     finally { setLoading(false); }
   }, []);
@@ -120,11 +118,10 @@ export default function AuditTrail() {
     const params = new URLSearchParams({ page: '1', page_size: '1000' });
     if (search.trim()) params.set('username', search.trim());
     if (actionFilter !== 'all') params.set('action', actionFilter);
-    const res = await fetch(`${API_URL}/api/audit/?${params}`, {
-      headers: { Authorization: `Bearer ${getToken()}` },
-    });
-    if (!res.ok) return;
-    const d: AuditResponse = await res.json();
+    let d: AuditResponse;
+    try {
+      d = await fetchApi(`/api/audit/?${params}`);
+    } catch { return; }
     const header = ['ID', 'Utilisateur', 'Action', 'Horodatage', 'IP', 'Navigateur'];
     const rows = d.items.map(i => [i.id, i.username, i.action, i.timestamp, i.ip_address ?? '', parseUA(i.user_agent)]);
     const csv = [header, ...rows].map(r => r.join(',')).join('\n');

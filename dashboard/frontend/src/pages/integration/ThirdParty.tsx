@@ -11,7 +11,7 @@ import { Label } from '@/components/ui/label';
 import { Switch } from '@/components/ui/switch';
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs';
 import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from '@/components/ui/tooltip';
-import { API_URL, getToken } from '@/lib/api';
+import { fetchApi } from '@/lib/api';
 
 // ── InfoTooltip ────────────────────────────────────────────────────────────────
 function InfoTooltip({ text, side = 'top' }: { text: string; side?: 'top' | 'right' | 'bottom' | 'left' }) {
@@ -76,13 +76,11 @@ export default function ThirdParty() {
     flashTimer.current = setTimeout(() => setFlash(null), 5000);
   };
 
-  const authHeader = () => ({ Authorization: `Bearer ${getToken()}` });
-
   const load = useCallback(async () => {
     setLoading(true);
     try {
-      const res = await fetch(`${API_URL}/api/system/integration-settings`, { headers: authHeader() });
-      if (res.ok) setCfg(await res.json());
+      const data = await fetchApi('/api/system/integration-settings');
+      setCfg(data);
     } catch { /* silent */ }
     finally { setLoading(false); }
   }, []);
@@ -92,13 +90,11 @@ export default function ThirdParty() {
   const save = async () => {
     setSaving(true);
     try {
-      const res = await fetch(`${API_URL}/api/system/integration-settings`, {
+      await fetchApi('/api/system/integration-settings', {
         method: 'PUT',
-        headers: { 'Content-Type': 'application/json', ...authHeader() },
         body: JSON.stringify(cfg),
       });
-      if (res.ok) showFlash('Paramètres d\'intégration enregistrés.');
-      else showFlash('Erreur lors de la sauvegarde.', false);
+      showFlash('Paramètres d\'intégration enregistrés.');
     } catch {
       showFlash('Erreur réseau.', false);
     } finally {
@@ -110,22 +106,13 @@ export default function ThirdParty() {
     if (!cfg.webhook_url) { showFlash('Configurez d\'abord l\'URL du webhook.', false); return; }
     setTesting('webhook');
     // Save first so the backend uses the latest URL
-    await fetch(`${API_URL}/api/system/integration-settings`, {
+    await fetchApi('/api/system/integration-settings', {
       method: 'PUT',
-      headers: { 'Content-Type': 'application/json', ...authHeader() },
       body: JSON.stringify(cfg),
-    });
+    }).catch(() => {});
     try {
-      const res = await fetch(`${API_URL}/api/system/test-webhook`, {
-        method: 'POST', headers: authHeader(),
-      });
-      if (res.ok) {
-        const d = await res.json();
-        showFlash(`Webhook testé avec succès — HTTP ${d.status_code}`);
-      } else {
-        const d = await res.json().catch(() => ({}));
-        showFlash((d as { detail?: string }).detail ?? 'Échec du test webhook.', false);
-      }
+      const d = await fetchApi('/api/system/test-webhook', { method: 'POST' });
+      showFlash(`Webhook testé avec succès — HTTP ${d.status_code}`);
     } catch {
       showFlash('Erreur réseau lors du test.', false);
     } finally {
@@ -377,18 +364,13 @@ export default function ThirdParty() {
                 onClick={async () => {
                   setTesting('smtp');
                   // Save first so backend uses latest config
-                  await fetch(`${API_URL}/api/system/integration-settings`, {
+                  await fetchApi('/api/system/integration-settings', {
                     method: 'PUT',
-                    headers: { 'Content-Type': 'application/json', ...authHeader() },
                     body: JSON.stringify(cfg),
-                  });
+                  }).catch(() => {});
                   try {
-                    const res = await fetch(`${API_URL}/api/system/test-smtp`, {
-                      method: 'POST', headers: authHeader(),
-                    });
-                    const d = await res.json();
-                    if (res.ok) showFlash(d.message ?? 'Email de test envoyé.');
-                    else showFlash((d as { detail?: string }).detail ?? 'Échec du test SMTP.', false);
+                    const d = await fetchApi('/api/system/test-smtp', { method: 'POST' });
+                    showFlash(d.message ?? 'Email de test envoyé.');
                   } catch {
                     showFlash('Erreur réseau lors du test SMTP.', false);
                   } finally {
@@ -500,18 +482,13 @@ export default function ThirdParty() {
                 disabled={testing === 'slack' || cfg.slack_enabled !== 'true' || !cfg.slack_webhook_url}
                 onClick={async () => {
                   setTesting('slack');
-                  await fetch(`${API_URL}/api/system/integration-settings`, {
+                  await fetchApi('/api/system/integration-settings', {
                     method: 'PUT',
-                    headers: { 'Content-Type': 'application/json', ...authHeader() },
                     body: JSON.stringify(cfg),
-                  });
+                  }).catch(() => {});
                   try {
-                    const res = await fetch(`${API_URL}/api/system/test-slack`, {
-                      method: 'POST', headers: authHeader(),
-                    });
-                    const d = await res.json();
-                    if (res.ok) showFlash(d.message ?? 'Message de test envoyé sur Slack.');
-                    else showFlash((d as { detail?: string }).detail ?? 'Échec du test Slack.', false);
+                    const d = await fetchApi('/api/system/test-slack', { method: 'POST' });
+                    showFlash(d.message ?? 'Message de test envoyé sur Slack.');
                   } catch {
                     showFlash('Erreur réseau lors du test Slack.', false);
                   } finally {
@@ -565,18 +542,13 @@ export default function ThirdParty() {
                 disabled={testing === 'teams' || cfg.teams_enabled !== 'true' || !cfg.teams_webhook_url}
                 onClick={async () => {
                   setTesting('teams');
-                  await fetch(`${API_URL}/api/system/integration-settings`, {
+                  await fetchApi('/api/system/integration-settings', {
                     method: 'PUT',
-                    headers: { 'Content-Type': 'application/json', ...authHeader() },
                     body: JSON.stringify(cfg),
-                  });
+                  }).catch(() => {});
                   try {
-                    const res = await fetch(`${API_URL}/api/system/test-teams`, {
-                      method: 'POST', headers: authHeader(),
-                    });
-                    const d = await res.json();
-                    if (res.ok) showFlash(d.message ?? 'Message de test envoyé sur Teams.');
-                    else showFlash((d as { detail?: string }).detail ?? 'Échec du test Teams.', false);
+                    const d = await fetchApi('/api/system/test-teams', { method: 'POST' });
+                    showFlash(d.message ?? 'Message de test envoyé sur Teams.');
                   } catch {
                     showFlash('Erreur réseau lors du test Teams.', false);
                   } finally {

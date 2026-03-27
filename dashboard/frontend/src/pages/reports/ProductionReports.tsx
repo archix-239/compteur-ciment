@@ -37,7 +37,7 @@ import {
   Tooltip as ReTooltip,
   Cell,
 } from 'recharts';
-import { API_URL } from '@/lib/api';
+import { API_URL, fetchApi } from '@/lib/api';
 
 // ─── Types ────────────────────────────────────────────────────────────────────
 interface TrendBucket {
@@ -134,9 +134,7 @@ export default function ProductionReports() {
   const loadData = useCallback(async (p: string) => {
     setLoading(true);
     try {
-      const res = await fetch(`${API_URL}/api/reports/production?period=${p}`);
-      if (!res.ok) throw new Error('fetch failed');
-      const json: ReportData = await res.json();
+      const json: ReportData = await fetchApi(`/api/reports/production?period=${p}`);
       setData(json);
     } catch (e) {
       console.error('Report fetch error:', e);

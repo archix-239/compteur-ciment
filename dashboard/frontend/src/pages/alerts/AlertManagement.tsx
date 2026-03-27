@@ -59,7 +59,7 @@ import {
   TooltipContent,
   TooltipTrigger,
 } from '@/components/ui/tooltip';
-import { API_URL, WS_URL } from '@/lib/api';
+import { WS_URL, fetchApi } from '@/lib/api';
 
 // ── Sound utility (Web Audio API — no external file needed) ──────────────────
 // A single shared AudioContext, created on first user gesture and reused
@@ -211,14 +211,14 @@ export default function AlertManagement() {
   const loadAll = useCallback(async () => {
     setLoading(true);
     try {
-      const [histRes, rulesRes, settRes] = await Promise.all([
-        fetch(`${API_URL}/api/alerts/history?limit=100`),
-        fetch(`${API_URL}/api/alerts/rules`),
-        fetch(`${API_URL}/api/alerts/settings`),
+      const [hist, rules, sett] = await Promise.all([
+        fetchApi('/api/alerts/history?limit=100'),
+        fetchApi('/api/alerts/rules'),
+        fetchApi('/api/alerts/settings'),
       ]);
-      if (histRes.ok)   setAlerts(await histRes.json());
-      if (rulesRes.ok)  setRules(await rulesRes.json());
-      if (settRes.ok)   setSettings(await settRes.json());
+      setAlerts(hist);
+      setRules(rules);
+      setSettings(sett);
     } catch {
       flash('Erreur de chargement des alertes.', false);
     } finally {
@@ -249,23 +249,23 @@ export default function AlertManagement() {
 
   // ── Actions: notifications ──────────────────────────────────────────────────
   const markRead = async (id: number) => {
-    await fetch(`${API_URL}/api/alerts/history/${id}/read`, { method: 'PATCH' });
+    await fetchApi(`/api/alerts/history/${id}/read`, { method: 'PATCH' });
     setAlerts(prev => prev.map(a => a.id === id ? { ...a, is_read: true } : a));
   };
 
   const deleteAlert = async (id: number) => {
-    await fetch(`${API_URL}/api/alerts/history/${id}`, { method: 'DELETE' });
+    await fetchApi(`/api/alerts/history/${id}`, { method: 'DELETE' });
     setAlerts(prev => prev.filter(a => a.id !== id));
   };
 
   const markAllRead = async () => {
-    await fetch(`${API_URL}/api/alerts/history/read-all`, { method: 'POST' });
+    await fetchApi('/api/alerts/history/read-all', { method: 'POST' });
     setAlerts(prev => prev.map(a => ({ ...a, is_read: true })));
     flash('Toutes les alertes marquées comme lues.');
   };
 
   const clearAll = async () => {
-    await fetch(`${API_URL}/api/alerts/history`, { method: 'DELETE' });
+    await fetchApi('/api/alerts/history', { method: 'DELETE' });
     setAlerts([]);
     flash('Historique des alertes effacé.');
   };
@@ -276,9 +276,8 @@ export default function AlertManagement() {
     setSettings(next);
     setSaving(true);
     try {
-      await fetch(`${API_URL}/api/alerts/settings`, {
+      await fetchApi('/api/alerts/settings', {
         method: 'PUT',
-        headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify(next),
       });
       flash('Configuration enregistrée.');
@@ -293,9 +292,8 @@ export default function AlertManagement() {
   const updateRule = async (id: number, patch: Partial<AlertRule>) => {
     setRules(prev => prev.map(r => r.id === id ? { ...r, ...patch } : r));
     try {
-      await fetch(`${API_URL}/api/alerts/rules/${id}`, {
+      await fetchApi(`/api/alerts/rules/${id}`, {
         method: 'PUT',
-        headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify(patch),
       });
       flash('Règle mise à jour.');
@@ -309,22 +307,16 @@ export default function AlertManagement() {
     if (!newRule.name.trim()) { flash('Veuillez saisir un nom pour la règle.', false); return; }
     setNewRuleSaving(true);
     try {
-      const res = await fetch(`${API_URL}/api/alerts/rules`, {
+      const created = await fetchApi('/api/alerts/rules', {
         method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify(newRule),
       });
-      if (res.ok) {
-        const created = await res.json();
-        setRules(prev => [...prev, created]);
-        setNewRuleOpen(false);
-        setNewRule({ name: '', type: 'production_rate', threshold: 10, is_active: true });
-        flash('Règle créée avec succès.');
-      } else {
-        flash('Erreur lors de la création de la règle.', false);
-      }
+      setRules(prev => [...prev, created]);
+      setNewRuleOpen(false);
+      setNewRule({ name: '', type: 'production_rate', threshold: 10, is_active: true });
+      flash('Règle créée avec succès.');
     } catch {
-      flash('Erreur réseau.', false);
+      flash('Erreur lors de la création de la règle.', false);
     } finally {
       setNewRuleSaving(false);
     }
@@ -332,7 +324,7 @@ export default function AlertManagement() {
 
   // ── Actions: delete rule ────────────────────────────────────────────────────
   const deleteRule = async (id: number) => {
-    await fetch(`${API_URL}/api/alerts/rules/${id}`, { method: 'DELETE' });
+    await fetchApi(`/api/alerts/rules/${id}`, { method: 'DELETE' });
     setRules(prev => prev.filter(r => r.id !== id));
     flash('Règle supprimée.');
   };
@@ -340,20 +332,16 @@ export default function AlertManagement() {
   // ── Actions: manual alert ───────────────────────────────────────────────────
   const triggerManual = async () => {
     try {
-      const res = await fetch(`${API_URL}/api/alerts/history`, {
+      const newAlert = await fetchApi('/api/alerts/history', {
         method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
           title: 'Alerte manuelle',
           message: 'Alerte déclenchée manuellement par l\'opérateur.',
           alert_type: 'warning',
         }),
       });
-      if (res.ok) {
-        const newAlert = await res.json();
-        setAlerts(prev => [newAlert, ...prev]);
-        flash('Alerte manuelle déclenchée.');
-      }
+      setAlerts(prev => [newAlert, ...prev]);
+      flash('Alerte manuelle déclenchée.');
     } catch {
       flash('Impossible de créer l\'alerte.', false);
     }
@@ -363,8 +351,7 @@ export default function AlertManagement() {
   const evaluateRules = async () => {
     setEvaluating(true);
     try {
-      const res = await fetch(`${API_URL}/api/alerts/evaluate`, { method: 'POST' });
-      const data = await res.json();
+      const data = await fetchApi('/api/alerts/evaluate', { method: 'POST' });
       if (data.triggered > 0) {
         flash(`${data.triggered} nouvelle(s) alerte(s) générée(s).`);
         loadAll();

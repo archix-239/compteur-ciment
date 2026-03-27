@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useState } from 'react';
-import { API_URL } from '@/lib/api';
+import { fetchApi } from '@/lib/api';
 import {
   Activity,
   Server,
@@ -139,14 +139,10 @@ export default function SystemHealth() {
 
   const fetchHealth = useCallback(async () => {
     try {
-      const res = await fetch(`${API_URL}/api/system/health`);
-      if (res.ok) {
-        setHealth(await res.json());
-        setLastUpdate(new Date());
-        setError(false);
-      } else {
-        setError(true);
-      }
+      const data = await fetchApi('/api/system/health');
+      setHealth(data);
+      setLastUpdate(new Date());
+      setError(false);
     } catch {
       setError(true);
     } finally {

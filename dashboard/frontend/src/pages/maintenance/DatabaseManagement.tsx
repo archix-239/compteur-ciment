@@ -10,7 +10,7 @@ import { Progress } from '@/components/ui/progress';
 import { Badge } from '@/components/ui/badge';
 import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from '@/components/ui/tooltip';
 import { PageHeader } from '@/components/PageHeader';
-import { API_URL } from '@/lib/api';
+import { API_URL, fetchApi, getToken } from '@/lib/api';
 
 // ─── Types ────────────────────────────────────────────────────────────────────
 interface TableStat {
@@ -120,9 +120,8 @@ export default function DatabaseManagement() {
   const loadStats = useCallback(async () => {
     setLoading(true);
     try {
-      const res = await fetch(`${API_URL}/api/database/stats`);
-      if (!res.ok) throw new Error('Erreur chargement stats');
-      setStats(await res.json());
+      const data = await fetchApi('/api/database/stats');
+      setStats(data);
     } catch (e: any) {
       showFlash(e.message || 'Impossible de charger les statistiques', false);
     } finally {
@@ -136,9 +135,7 @@ export default function DatabaseManagement() {
   const handleReindex = async () => {
     setBusy('reindex');
     try {
-      const res = await fetch(`${API_URL}/api/database/reindex`, { method: 'POST' });
-      const data = await res.json();
-      if (!res.ok) throw new Error(data.detail || 'Erreur');
+      const data = await fetchApi('/api/database/reindex', { method: 'POST' });
       showFlash(`Réindexation terminée en ${data.elapsed_ms} ms`, true);
       await loadStats();
     } catch (e: any) {
@@ -152,7 +149,9 @@ export default function DatabaseManagement() {
   const handleBackup = async () => {
     setBusy('backup');
     try {
-      const res = await fetch(`${API_URL}/api/database/backup`);
+      const res = await fetch(`${API_URL}/api/database/backup`, {
+        headers: { Authorization: `Bearer ${getToken()}` },
+      });
       if (!res.ok) throw new Error('Erreur téléchargement backup');
       const blob = await res.blob();
       const cd = res.headers.get('Content-Disposition') || '';
@@ -173,9 +172,7 @@ export default function DatabaseManagement() {
   const handleOptimize = async () => {
     setBusy('optimize');
     try {
-      const res = await fetch(`${API_URL}/api/database/optimize`, { method: 'POST' });
-      const data = await res.json();
-      if (!res.ok) throw new Error(data.detail || 'Erreur optimisation');
+      const data = await fetchApi('/api/database/optimize', { method: 'POST' });
       const saved = data.saved_kb > 0 ? ` — ${data.saved_kb} KB récupérés` : '';
       showFlash(`Optimisation terminée en ${data.elapsed_ms} ms${saved}`, true);
       await loadStats();
@@ -191,13 +188,10 @@ export default function DatabaseManagement() {
     setConfirm(null);
     setBusy('archive');
     try {
-      const res = await fetch(`${API_URL}/api/database/archive`, {
+      const data = await fetchApi('/api/database/archive', {
         method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ days: stats?.retention_days ?? 90 }),
       });
-      const data = await res.json();
-      if (!res.ok) throw new Error(data.detail || 'Erreur archivage');
       showFlash(
         data.archived_sessions === 0
           ? 'Aucune session à archiver pour cette période'
@@ -217,13 +211,10 @@ export default function DatabaseManagement() {
     setConfirm(null);
     setBusy('purge');
     try {
-      const res = await fetch(`${API_URL}/api/database/purge`, {
+      const data = await fetchApi('/api/database/purge', {
         method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ days: stats?.retention_days ?? 90 }),
       });
-      const data = await res.json();
-      if (!res.ok) throw new Error(data.detail || 'Erreur purge');
       showFlash(
         `Purge : ${data.purged_logs} logs supprimés (${data.purged_files} fichiers)`,
         true

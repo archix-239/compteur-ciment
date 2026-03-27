@@ -18,7 +18,7 @@ import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs';
 import {
   Tooltip, TooltipContent, TooltipProvider, TooltipTrigger,
 } from '@/components/ui/tooltip';
-import { API_URL } from '@/lib/api';
+import { API_URL, fetchApi, getToken } from '@/lib/api';
 
 // ── Types ──────────────────────────────────────────────────────────────────────
 
@@ -148,16 +148,16 @@ export default function SystemSettings() {
   const loadAll = useCallback(async () => {
     setLoading(true);
     try {
-      const [genRes, alertRes, rulesRes, secRes] = await Promise.all([
-        fetch(`${API_URL}/api/system/general-settings`),
-        fetch(`${API_URL}/api/alerts/settings`),
-        fetch(`${API_URL}/api/alerts/rules`),
-        fetch(`${API_URL}/api/system/security-settings`),
+      const [gen, alertSett, rules, sec] = await Promise.all([
+        fetchApi('/api/system/general-settings'),
+        fetchApi('/api/alerts/settings'),
+        fetchApi('/api/alerts/rules'),
+        fetchApi('/api/system/security-settings'),
       ]);
-      if (genRes.ok)   setGeneral(await genRes.json());
-      if (alertRes.ok) setAlertSettings(await alertRes.json());
-      if (rulesRes.ok) setAlertRules(await rulesRes.json());
-      if (secRes.ok)   setSecurity(await secRes.json());
+      setGeneral(gen);
+      setAlertSettings(alertSett);
+      setAlertRules(rules);
+      setSecurity(sec);
     } catch {
       showFlash('Erreur lors du chargement des paramètres.', false);
     } finally {
@@ -171,15 +171,13 @@ export default function SystemSettings() {
   const saveGeneral = async () => {
     setSaving(true);
     try {
-      const res = await fetch(`${API_URL}/api/system/general-settings`, {
+      await fetchApi('/api/system/general-settings', {
         method: 'PUT',
-        headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify(general),
       });
-      if (res.ok) showFlash('Paramètres enregistrés.');
-      else showFlash('Erreur lors de la sauvegarde.', false);
+      showFlash('Paramètres enregistrés.');
     } catch {
-      showFlash('Erreur réseau.', false);
+      showFlash('Erreur lors de la sauvegarde.', false);
     } finally {
       setSaving(false);
     }
@@ -189,15 +187,13 @@ export default function SystemSettings() {
   const saveSecurity = async () => {
     setSecSaving(true);
     try {
-      const res = await fetch(`${API_URL}/api/system/security-settings`, {
+      await fetchApi('/api/system/security-settings', {
         method: 'PUT',
-        headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify(security),
       });
-      if (res.ok) showFlash('Paramètres de sécurité enregistrés.');
-      else showFlash('Erreur lors de la sauvegarde.', false);
+      showFlash('Paramètres de sécurité enregistrés.');
     } catch {
-      showFlash('Erreur réseau.', false);
+      showFlash('Erreur lors de la sauvegarde.', false);
     } finally {
       setSecSaving(false);
     }
@@ -209,9 +205,8 @@ export default function SystemSettings() {
     setAlertSettings(next);
     setAlertSaving(true);
     try {
-      await fetch(`${API_URL}/api/alerts/settings`, {
+      await fetchApi('/api/alerts/settings', {
         method: 'PUT',
-        headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify(next),
       });
     } catch {
@@ -225,9 +220,8 @@ export default function SystemSettings() {
   const updateRule = async (id: number, patch: Partial<AlertRule>) => {
     setAlertRules(prev => prev.map(r => r.id === id ? { ...r, ...patch } : r));
     try {
-      await fetch(`${API_URL}/api/alerts/rules/${id}`, {
+      await fetchApi(`/api/alerts/rules/${id}`, {
         method: 'PUT',
-        headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify(patch),
       });
     } catch {
@@ -239,7 +233,9 @@ export default function SystemSettings() {
   const exportConfig = async () => {
     setExporting(true);
     try {
-      const res = await fetch(`${API_URL}/api/system/export-config`);
+      const res = await fetch(`${API_URL}/api/system/export-config`, {
+        headers: { Authorization: `Bearer ${getToken()}` },
+      });
       if (!res.ok) { showFlash('Erreur lors de l\'export.', false); return; }
       const blob = await res.blob();
       const cd = res.headers.get('content-disposition') ?? '';
@@ -265,19 +261,12 @@ export default function SystemSettings() {
     try {
       const text = await file.text();
       const json = JSON.parse(text);
-      const res = await fetch(`${API_URL}/api/system/import-config`, {
+      const data = await fetchApi('/api/system/import-config', {
         method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify(json),
       });
-      if (res.ok) {
-        const data = await res.json();
-        showFlash(`Configuration restaurée — ${data.restored_keys} paramètres importés.`);
-        await loadAll();
-      } else {
-        const err = await res.json().catch(() => ({}));
-        showFlash((err as { detail?: string }).detail ?? 'Erreur lors de l\'import.', false);
-      }
+      showFlash(`Configuration restaurée — ${data.restored_keys} paramètres importés.`);
+      await loadAll();
     } catch {
       showFlash('Fichier invalide ou erreur réseau.', false);
     } finally {
@@ -290,7 +279,9 @@ export default function SystemSettings() {
   const downloadBackup = async () => {
     setBackingUp(true);
     try {
-      const res = await fetch(`${API_URL}/api/system/db-backup`);
+      const res = await fetch(`${API_URL}/api/system/db-backup`, {
+        headers: { Authorization: `Bearer ${getToken()}` },
+      });
       if (!res.ok) { showFlash('Erreur lors du backup.', false); return; }
       const blob = await res.blob();
       const cd = res.headers.get('content-disposition') ?? '';

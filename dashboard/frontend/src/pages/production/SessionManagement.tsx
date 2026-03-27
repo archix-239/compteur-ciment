@@ -1,5 +1,5 @@
 import { useState, useEffect, useRef, useMemo } from 'react';
-import { API_URL, WS_URL } from '@/lib/api';
+import { WS_URL, fetchApi } from '@/lib/api';
 import { Clock, Play, Square, History, BarChart2, Search, Trash2, XCircle, Loader2 } from 'lucide-react';
 import { Card } from '@/components/ui/card';
 import { Button } from '@/components/ui/button';
@@ -52,8 +52,7 @@ export default function SessionManagement() {
   const [clearTarget, setClearTarget] = useState<SessionItem | null>(null);
 
   const fetchSessions = () => {
-    fetch(`${API_URL}/sessions/?page=1&page_size=50`)
-      .then(res => res.json())
+    fetchApi('/sessions/?page=1&page_size=50')
       .then((data: SessionResponse) => {
         const items = data.items || [];
         setSessions(items);
@@ -115,8 +114,7 @@ export default function SessionManagement() {
   const startSession = () => {
     if (actionLoading) return;
     setActionLoading('start');
-    fetch(`${API_URL}/sessions/start`, { method: 'POST' })
-      .then(res => res.json())
+    fetchApi('/sessions/start', { method: 'POST' })
       .then(() => fetchSessions())
       .catch(err => { console.error('Error starting session:', err); setActionLoading(null); });
   };
@@ -126,8 +124,7 @@ export default function SessionManagement() {
     setActionLoading(id + '-stop');
     // Optimistic: immediately hide the active card so the user gets instant feedback
     setActiveSession(null);
-    fetch(`${API_URL}/sessions/stop/${id}`, { method: 'POST' })
-      .then(res => res.json())
+    fetchApi(`/sessions/stop/${id}`, { method: 'POST' })
       .then(() => fetchSessions())
       .catch(err => { console.error('Error stopping session:', err); fetchSessions(); })
       .finally(() => setActionLoading(null));
@@ -137,7 +134,7 @@ export default function SessionManagement() {
     if (!deleteTarget) return;
     setActionLoading(deleteTarget.id + '-delete');
     try {
-      await fetch(`${API_URL}/api/sessions/${deleteTarget.id}`, { method: 'DELETE' });
+      await fetchApi(`/api/sessions/${deleteTarget.id}`, { method: 'DELETE' });
       fetchSessions();
     } catch (err) {
       console.error('Error deleting session:', err);
@@ -151,7 +148,7 @@ export default function SessionManagement() {
     if (!clearTarget) return;
     setActionLoading(clearTarget.id + '-clear');
     try {
-      await fetch(`${API_URL}/api/sessions/${clearTarget.id}/logs`, { method: 'DELETE' });
+      await fetchApi(`/api/sessions/${clearTarget.id}/logs`, { method: 'DELETE' });
       fetchSessions();
     } catch (err) {
       console.error('Error clearing session logs:', err);

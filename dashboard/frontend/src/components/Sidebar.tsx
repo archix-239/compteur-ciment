@@ -5,7 +5,7 @@ import {
   Cpu, RefreshCw, Server, History,
 } from 'lucide-react';
 import { useState, useEffect } from 'react';
-import { API_URL } from '@/lib/api';
+import { fetchApi } from '@/lib/api';
 import { useAuth } from '@/contexts/AuthContext';
 import { useLocation } from 'wouter';
 
@@ -124,8 +124,8 @@ export function Sidebar({ activeRoute = 'dashboard' }: SidebarProps) {
   useEffect(() => {
     const fetchUnread = async () => {
       try {
-        const res = await fetch(`${API_URL}/api/alerts/unread-count`);
-        if (res.ok) setUnreadAlerts((await res.json()).count ?? 0);
+        const data = await fetchApi('/api/alerts/unread-count');
+        setUnreadAlerts(data.count ?? 0);
       } catch { /* silent */ }
     };
     fetchUnread();

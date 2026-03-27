@@ -35,7 +35,7 @@ import {
 } from '@/components/ui/select';
 import { Tooltip, TooltipContent, TooltipTrigger } from '@/components/ui/tooltip';
 import { PageHeader } from '@/components/PageHeader';
-import { API_URL } from '@/lib/api';
+import { API_URL, fetchApi, getToken } from '@/lib/api';
 
 // ── InfoTooltip ────────────────────────────────────────────────────────────────
 function InfoTooltip({ text, side = 'top' }: { text: string; side?: 'top' | 'right' | 'bottom' | 'left' }) {
@@ -206,8 +206,7 @@ export default function DataExport() {
     setPreviewLoading(true);
     const params = new URLSearchParams({ period, source });
     if (period === 'custom') { params.set('date_from', dateFrom); params.set('date_to', dateTo); }
-    fetch(`${API_URL}/api/reports/export/preview?${params}`)
-      .then(r => r.json())
+    fetchApi(`/api/reports/export/preview?${params}`)
       .then((d: Preview) => { setPreview(d); setPreviewLoading(false); })
       .catch(() => setPreviewLoading(false));
   }, [period, source, dateFrom, dateTo]);
@@ -217,8 +216,7 @@ export default function DataExport() {
   // ── Load export history ───────────────────────────────────────────────────
   const loadHistory = () => {
     setHistoryLoading(true);
-    fetch(`${API_URL}/api/reports/export/history`)
-      .then(r => r.json())
+    fetchApi('/api/reports/export/history')
       .then((d: ExportRecord[]) => { setHistory(d); setHistoryLoading(false); })
       .catch(() => setHistoryLoading(false));
   };
@@ -228,8 +226,8 @@ export default function DataExport() {
   const loadSched = () => {
     setSchedLoading(true);
     Promise.all([
-      fetch(`${API_URL}/api/reports/export/schedule`).then(r => r.json()),
-      fetch(`${API_URL}/api/reports/export/scheduled`).then(r => r.json()),
+      fetchApi('/api/reports/export/schedule'),
+      fetchApi('/api/reports/export/scheduled'),
     ])
       .then(([cfg, hist]) => {
         setSchedCfg(cfg);
@@ -248,7 +246,9 @@ export default function DataExport() {
     try {
       const params = new URLSearchParams({ period, source, fmt: format });
       if (period === 'custom') { params.set('date_from', dateFrom); params.set('date_to', dateTo); }
-      const res = await fetch(`${API_URL}/api/reports/export/data?${params}`);
+      const res = await fetch(`${API_URL}/api/reports/export/data?${params}`, {
+        headers: { Authorization: `Bearer ${getToken()}` },
+      });
       if (!res.ok) throw new Error('Échec de la génération');
       const blob = await res.blob();
       const cd = res.headers.get('Content-Disposition') || '';
@@ -273,13 +273,10 @@ export default function DataExport() {
     setSchedSaving(true);
     setSchedFlash(null);
     try {
-      const res = await fetch(`${API_URL}/api/reports/export/schedule`, {
+      const updated = await fetchApi('/api/reports/export/schedule', {
         method: 'PUT',
-        headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify(schedCfg),
       });
-      if (!res.ok) throw new Error('Échec de la sauvegarde');
-      const updated = await res.json();
       setSchedCfg(updated);
       setSchedFlash({ type: 'success', msg: 'Planification sauvegardée.' });
     } catch (e: any) {
@@ -295,9 +292,7 @@ export default function DataExport() {
     setSchedRunning(true);
     setSchedFlash(null);
     try {
-      const res = await fetch(`${API_URL}/api/reports/export/schedule/run`, { method: 'POST' });
-      const data = await res.json();
-      if (!res.ok) throw new Error(data.detail || 'Échec du déclenchement');
+      const data = await fetchApi('/api/reports/export/schedule/run', { method: 'POST' });
       setSchedFlash({ type: 'success', msg: `Export planifié généré : "${data.file}"` });
       loadSched();
     } catch (e: any) {

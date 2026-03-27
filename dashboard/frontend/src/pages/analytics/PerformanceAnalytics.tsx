@@ -32,7 +32,7 @@ import {
   PieChart as RePieChart,
   Pie,
 } from 'recharts';
-import { API_URL } from '@/lib/api';
+import { fetchApi } from '@/lib/api';
 
 // ─── Types ────────────────────────────────────────────────────────────────────
 interface HourlyBucket {
@@ -112,9 +112,7 @@ export default function PerformanceAnalytics() {
   const loadData = useCallback(async (hours: number) => {
     setLoading(true);
     try {
-      const res = await fetch(`${API_URL}/api/analytics/oee?hours=${hours}`);
-      if (!res.ok) throw new Error('fetch failed');
-      const json: OEEData = await res.json();
+      const json: OEEData = await fetchApi(`/api/analytics/oee?hours=${hours}`);
       setData(json);
     } catch (e) {
       console.error('OEE fetch error:', e);

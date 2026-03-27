@@ -12,7 +12,7 @@ import { ScrollArea } from '@/components/ui/scroll-area';
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs';
 import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from '@/components/ui/tooltip';
 import { PageHeader } from '@/components/PageHeader';
-import { API_URL } from '@/lib/api';
+import { API_URL, fetchApi, getToken } from '@/lib/api';
 
 // ─── Types ────────────────────────────────────────────────────────────────────
 interface DiagMetrics {
@@ -113,8 +113,8 @@ export default function Diagnostics() {
   // ── Load metrics ──────────────────────────────────────────────────────────
   const loadMetrics = useCallback(async () => {
     try {
-      const res = await fetch(`${API_URL}/api/diagnostics/metrics`);
-      if (res.ok) setMetrics(await res.json());
+      const data = await fetchApi('/api/diagnostics/metrics');
+      setMetrics(data);
     } catch { /* silent */ } finally {
       setLoadingMetrics(false);
     }
@@ -123,11 +123,8 @@ export default function Diagnostics() {
   // ── Load logs ─────────────────────────────────────────────────────────────
   const loadLogs = useCallback(async () => {
     try {
-      const res = await fetch(`${API_URL}/api/diagnostics/logs?limit=80`);
-      if (res.ok) {
-        const data = await res.json();
-        setLogs(data.logs ?? []);
-      }
+      const data = await fetchApi('/api/diagnostics/logs?limit=80');
+      setLogs(data.logs ?? []);
     } catch { /* silent */ } finally {
       setLoadingLogs(false);
     }
@@ -154,7 +151,9 @@ export default function Diagnostics() {
   // ── Download logs ─────────────────────────────────────────────────────────
   const handleDownloadLogs = async () => {
     try {
-      const res = await fetch(`${API_URL}/api/diagnostics/logs/download`);
+      const res = await fetch(`${API_URL}/api/diagnostics/logs/download`, {
+        headers: { Authorization: `Bearer ${getToken()}` },
+      });
       if (!res.ok) throw new Error('Erreur téléchargement');
       const blob  = await res.blob();
       const cd    = res.headers.get('Content-Disposition') || '';
@@ -181,13 +180,10 @@ export default function Diagnostics() {
       })));
     }
     try {
-      const res  = await fetch(`${API_URL}/api/diagnostics/run-tests`, {
+      const data = await fetchApi('/api/diagnostics/run-tests', {
         method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify(key ? { test: key } : {}),
       });
-      const data = await res.json();
-      if (!res.ok) throw new Error(data.detail || 'Erreur');
       if (key) {
         setTestResults(prev => prev.map(r => r.key === key ? (data.results[0] ?? r) : r));
       } else {
@@ -210,9 +206,7 @@ export default function Diagnostics() {
     setBenchRunning(true);
     setBenchResult(null);
     try {
-      const res  = await fetch(`${API_URL}/api/diagnostics/benchmark`, { method: 'POST' });
-      const data = await res.json();
-      if (!res.ok) throw new Error(data.detail || 'Erreur benchmark');
+      const data = await fetchApi('/api/diagnostics/benchmark', { method: 'POST' });
       const result: BenchResult = { ...data, ran_at: new Date().toLocaleTimeString('fr-FR') };
       setBenchResult(result);
       setBenchHistory(prev => [result, ...prev].slice(0, 5));

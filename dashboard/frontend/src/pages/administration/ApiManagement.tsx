@@ -19,7 +19,7 @@ import {
 import {
   Table, TableBody, TableCell, TableHead, TableHeader, TableRow,
 } from '@/components/ui/table';
-import { API_URL, getToken } from '@/lib/api';
+import { API_URL, fetchApi } from '@/lib/api';
 
 // ── Types ──────────────────────────────────────────────────────────────────────
 
@@ -73,13 +73,11 @@ export default function ApiManagement() {
     flashTimer.current = setTimeout(() => setFlash(null), 4000);
   };
 
-  const authHeader = () => ({ Authorization: `Bearer ${getToken()}` });
-
   const loadKeys = useCallback(async () => {
     setLoading(true);
     try {
-      const res = await fetch(`${API_URL}/api/apikeys/`, { headers: authHeader() });
-      if (res.ok) setKeys(await res.json());
+      const data = await fetchApi('/api/apikeys/');
+      setKeys(data);
     } catch { /* silent */ }
     finally { setLoading(false); }
   }, []);
@@ -90,23 +88,17 @@ export default function ApiManagement() {
     if (!newName.trim()) { showFlash('Le nom est requis.', false); return; }
     setCreating(true);
     try {
-      const res = await fetch(`${API_URL}/api/apikeys/`, {
+      const data = await fetchApi('/api/apikeys/', {
         method: 'POST',
-        headers: { 'Content-Type': 'application/json', ...authHeader() },
         body: JSON.stringify({ name: newName.trim(), scope: newScope }),
       });
-      if (res.ok) {
-        const data = await res.json();
-        setNewRawKey(data.raw_key);
-        setRawVisible(true);
-        setShowCreate(false);
-        setNewName(''); setNewScope('read');
-        await loadKeys();
-      } else {
-        showFlash('Erreur lors de la création.', false);
-      }
+      setNewRawKey(data.raw_key);
+      setRawVisible(true);
+      setShowCreate(false);
+      setNewName(''); setNewScope('read');
+      await loadKeys();
     } catch {
-      showFlash('Erreur réseau.', false);
+      showFlash('Erreur lors de la création.', false);
     } finally {
       setCreating(false);
     }
@@ -116,13 +108,9 @@ export default function ApiManagement() {
     if (revokeId === null) return;
     setRevoking(true);
     try {
-      const res = await fetch(`${API_URL}/api/apikeys/${revokeId}`, {
-        method: 'DELETE', headers: authHeader(),
-      });
-      if (res.ok) {
-        showFlash('Clé révoquée.');
-        await loadKeys();
-      } else showFlash('Erreur lors de la révocation.', false);
+      await fetchApi(`/api/apikeys/${revokeId}`, { method: 'DELETE' });
+      showFlash('Clé révoquée.');
+      await loadKeys();
     } catch {
       showFlash('Erreur réseau.', false);
     } finally {

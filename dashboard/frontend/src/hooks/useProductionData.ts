@@ -1,5 +1,5 @@
 import { useState, useCallback, useEffect } from 'react';
-import { API_URL, WS_URL } from '@/lib/api';
+import { WS_URL, fetchApi } from '@/lib/api';
 
 /**
  * Production Data Hook
@@ -63,9 +63,7 @@ export function useProductionData() {
 
   const loadData = useCallback(async () => {
     try {
-      const res = await fetch(`${API_URL}/api/dashboard/summary`);
-      if (!res.ok) return;
-      const data = await res.json();
+      const data = await fetchApi('/api/dashboard/summary');
 
       setMetrics({
         totalBags:          data.totalBags          ?? 0,
