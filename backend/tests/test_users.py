@@ -54,7 +54,7 @@ class TestCreateUser:
     def test_create_user_duplicate_username(self, client, admin_token, admin_user):
         response = client.post(
             "/api/users/",
-            json={"username": "test_admin", "password": "pass123", "role": "operateur", "full_name": ""},
+            json={"username": "test_admin", "password": "password123", "role": "operateur", "full_name": ""},
             headers=auth_header(admin_token),
         )
         assert response.status_code == 409

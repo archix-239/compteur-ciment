@@ -16,7 +16,7 @@ import asyncio
 import queue
 import logging
 import os
-from typing import List
+from typing import List, Literal
 from pydantic import BaseModel
 from . import models, schemas, auth, vision_engine
 from .database import engine, SessionLocal, get_db
@@ -2526,7 +2526,7 @@ def _hash_key(raw_key: str) -> str:
 
 class _ApiKeyCreate(BaseModel):
     name: str
-    scope: str = "read"
+    scope: Literal["read", "write", "admin"] = "read"
 
 @app.get("/api/apikeys/")
 async def list_api_keys(
@@ -3670,6 +3670,12 @@ async def login_for_access_token(request: Request, form_data: OAuth2PasswordRequ
         raise HTTPException(
             status_code=status.HTTP_401_UNAUTHORIZED,
             detail="Incorrect username or password",
+            headers={"WWW-Authenticate": "Bearer"},
+        )
+    if not user.is_active:
+        raise HTTPException(
+            status_code=status.HTTP_401_UNAUTHORIZED,
+            detail="Compte désactivé",
             headers={"WWW-Authenticate": "Bearer"},
         )
     # Record successful login + update user stats
