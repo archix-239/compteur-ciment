@@ -13,7 +13,7 @@ WORKDIR /app
 
 # Copier requirements séparément pour profiter du cache Docker
 COPY requirements.txt .
-RUN pip install --no-cache-dir -r requirements.txt
+RUN pip install --no-cache-dir --timeout 300 --retries 5 -r requirements.txt
 
 # Copier le code applicatif
 COPY app/ ./app/

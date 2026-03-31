@@ -82,7 +82,9 @@ JWT_SECRET_KEY=<votre_cle_aleatoire_ici>
 # OBLIGATOIRE : mot de passe du compte admin créé au démarrage
 DEFAULT_ADMIN_PASSWORD=<mot_de_passe_fort>
 
-# Base de données SQLite (chemin absolu dans le conteneur)
+# Base de données SQLite (chemin absolu dans le conteneur Docker — 4 slashes)
+# ⚠️  NE PAS utiliser sqlite:///./... ici : le répertoire de travail dans le
+#     conteneur n'est pas persistant. Le volume Docker est monté sur /data.
 DATABASE_URL=sqlite:////data/cement_counter.db
 
 # Origines CORS autorisées (séparer par des virgules)
@@ -233,6 +235,14 @@ RATELIMIT_ENABLED=false
 ```
 
 > **Note développement** : `LOG_LEVEL=DEBUG` et `RATELIMIT_ENABLED=false` facilitent le débogage local.
+
+> **Chemin SQLite — local vs Docker** : le format de `DATABASE_URL` diffère selon le contexte :
+> | Contexte | Valeur | Explication |
+> |---|---|---|
+> | **Développement local** | `sqlite:///./cement_counter.db` | Chemin relatif au répertoire courant (`backend/`) |
+> | **Docker** | `sqlite:////data/cement_counter.db` | Chemin absolu vers le volume persistant `/data` (4 slashes) |
+>
+> Utiliser le chemin Docker (`////data/...`) sur une machine locale provoque l'erreur `sqlite3.OperationalError: unable to open database file` si le répertoire `/data` n'existe pas.
 
 ---
 
@@ -648,7 +658,9 @@ JWT_SECRET_KEY=a3f8e2c1d9b4057e6f3a8c2d1e9b4057e6f3a8c2d1e9b4057e6f3a8c2d1e9b4
 # Mot de passe admin — OBLIGATOIRE — Utiliser un mot de passe fort
 DEFAULT_ADMIN_PASSWORD=Cim3nt@Prod2026!
 
-# Base de données (chemin absolu dans le conteneur Docker)
+# Base de données (chemin absolu dans le conteneur Docker — 4 slashes obligatoires)
+# ⚠️  Ne pas utiliser sqlite:///./... : ce chemin relatif pointe vers /app dans
+#     le conteneur, qui n'est pas persistant. Le volume db_data est monté sur /data.
 DATABASE_URL=sqlite:////data/cement_counter.db
 
 # Origines CORS — Remplacer par l'IP ou le domaine réel du serveur
@@ -850,6 +862,8 @@ cd /opt/compteur_ciment
 ---
 
 ### Étape D.4 — Créer le fichier .env de production
+
+> **Chemin SQLite** : le déploiement Docker utilise `sqlite:////data/cement_counter.db` (4 slashes = chemin absolu vers le volume persistant `/data`). Ne jamais utiliser `sqlite:///./...` ici — ce chemin relatif pointerait vers `/app` à l'intérieur du conteneur, un répertoire non persistant qui disparaît à chaque redémarrage.
 
 ```bash
 # Générer une clé JWT robuste
